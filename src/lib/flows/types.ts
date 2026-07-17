@@ -47,6 +47,12 @@ export interface SendButtonsNodeConfig {
     title: string;
     /** node_key the runner advances to when this button is tapped. */
     next_node_key: string;
+    /** Optional — when set, this button's own `title` is written to
+     *  `flow_runs.vars[capture_var]` on tap (e.g. remembering which
+     *  static option — "Residencial"/"Comercial"/"Oficina" — the
+     *  customer picked, the same way collect_input remembers typed
+     *  text). */
+    capture_var?: string;
   }>;
 }
 
@@ -56,7 +62,8 @@ export interface SendListNodeConfig {
   button_label: string;
   header_text?: string;
   footer_text?: string;
-  /** 1-10 rows TOTAL across sections; cap enforced in meta-api. */
+  /** 1-10 rows TOTAL across sections; cap enforced in meta-api. Ignored
+   *  when `dynamic` is set (see below). */
   sections: Array<{
     title?: string;
     rows: Array<{
@@ -64,8 +71,36 @@ export interface SendListNodeConfig {
       title: string;
       description?: string;
       next_node_key: string;
+      /** Same as SendButtonsNodeConfig.buttons[].capture_var. */
+      capture_var?: string;
     }>;
   }>;
+  /**
+   * When set, the rows sent to Meta are built at send-time from
+   * `flow_runs.vars` instead of the static `sections` above — e.g. a
+   * prior `http_fetch` node fetched real availability and stored it in
+   * vars. All dynamic rows share one `next_node_key` (unlike static
+   * rows, which each carry their own), since they aren't known at
+   * authoring time.
+   */
+  dynamic?: {
+    /** Dot-path into flow_runs.vars resolving to an array of
+     *  `{id: string; title: string; description?: string}` — e.g.
+     *  "avail.options" reads `vars.avail.options`. */
+    rows_var: string;
+    /** vars key to store the tapped option's `title`. */
+    capture_title_var: string;
+    /** vars key to store the tapped option's `id`. */
+    capture_id_var: string;
+    /** Node every dynamic row advances to once tapped. */
+    next_node_key: string;
+    /** Meta rejects an interactive list with zero rows — if `rows_var`
+     *  resolves to an empty/missing array (e.g. the fetch failed), the
+     *  engine sends `text` as a plain message instead and advances here.
+     *  Point this at a free-text fallback (e.g. a collect_input) so the
+     *  customer is never left stuck. */
+    empty_next_node_key: string;
+  };
 }
 
 /**
@@ -134,6 +169,15 @@ export interface CollectInputNodeConfig {
   regex?: string;
   /** Node to advance to after capture. */
   next_node_key: string;
+  /**
+   * When set, the captured text is ALSO written to this field on the
+   * `contacts` row (not just `flow_runs.vars`, which only lives for
+   * this one run). Lets a later run — a new conversation days later —
+   * know the answer already, via `{{contact.x}}`, instead of asking
+   * again (pair with a `condition` node on `contact_field` `present`
+   * before this node to skip re-asking).
+   */
+  persist_to_contact_field?: "name" | "email" | "company";
 }
 
 export type ConditionOperator =
@@ -192,6 +236,13 @@ export interface HttpFetchNodeConfig {
    */
   body_template?: string;
   next_node_key: string;
+  /**
+   * When set, and the response's Content-Type is JSON, the parsed body
+   * is stored at `flow_runs.vars[response_var]` — e.g. a `send_list`'s
+   * `dynamic.rows_var` can then read `"<response_var>.options"`. Not
+   * set when the fetch fails or the body isn't JSON.
+   */
+  response_var?: string;
 }
 
 // Terminal nodes carry no config — they just stop the run.

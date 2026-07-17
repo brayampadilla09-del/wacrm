@@ -412,6 +412,13 @@ function validateNode(
             next_node_key?: string;
           }>;
         }>;
+        dynamic?: {
+          rows_var?: string;
+          capture_title_var?: string;
+          capture_id_var?: string;
+          next_node_key?: string;
+          empty_next_node_key?: string;
+        };
       };
       if (!cfg.text?.trim()) {
         issues.push({
@@ -430,6 +437,43 @@ function validateNode(
           field: "button_label",
           message: "Send-list needs a button label (the tap-to-expand text).",
         });
+      }
+      if (cfg.dynamic) {
+        // Dynamic rows are built at send-time from vars — nothing to
+        // validate about `sections` (there are none). Just check the
+        // dynamic block's own required fields and edges.
+        const d = cfg.dynamic;
+        for (const field of ["rows_var", "capture_title_var", "capture_id_var"] as const) {
+          if (!d[field]?.trim()) {
+            issues.push({
+              severity: "error",
+              scope: "node",
+              node_key: node.node_key,
+              field: `dynamic.${field}`,
+              message: `Dynamic send-list needs "${field}".`,
+            });
+          }
+        }
+        for (const field of ["next_node_key", "empty_next_node_key"] as const) {
+          if (!d[field]) {
+            issues.push({
+              severity: "error",
+              scope: "node",
+              node_key: node.node_key,
+              field: `dynamic.${field}`,
+              message: `Dynamic send-list must point to a "${field}" node.`,
+            });
+          } else if (!knownKeys.has(d[field]!)) {
+            issues.push({
+              severity: "error",
+              scope: "node",
+              node_key: node.node_key,
+              field: `dynamic.${field}`,
+              message: `Dynamic send-list's "${field}" points to non-existent node "${d[field]}".`,
+            });
+          }
+        }
+        break;
       }
       const sections = cfg.sections ?? [];
       const totalRows = sections.reduce(
@@ -820,7 +864,13 @@ function outgoingEdges(node: NodeInput): string[] {
     case "send_list": {
       const cfg = node.config as {
         sections?: Array<{ rows?: Array<{ next_node_key?: string }> }>;
+        dynamic?: { next_node_key?: string; empty_next_node_key?: string };
       };
+      if (cfg.dynamic) {
+        return [cfg.dynamic.next_node_key, cfg.dynamic.empty_next_node_key].filter(
+          (k): k is string => !!k,
+        );
+      }
       const out: string[] = [];
       for (const s of cfg.sections ?? []) {
         for (const r of s.rows ?? []) {

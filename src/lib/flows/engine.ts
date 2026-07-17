@@ -82,6 +82,12 @@ export function matchReplyId(
   }
   if (node.node_type === "send_list") {
     const cfg = node.config as unknown as SendListNodeConfig;
+    if (cfg.dynamic) {
+      // Every dynamic row shares one next_node_key (rows aren't known at
+      // authoring time) — trust the reply_id Meta just echoed back from
+      // the list we sent moments ago.
+      return cfg.dynamic.next_node_key;
+    }
     for (const section of cfg.sections ?? []) {
       const hit = section.rows?.find((r) => r.reply_id === reply_id);
       if (hit) return hit.next_node_key;
@@ -397,8 +403,54 @@ async function sendListAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
-): Promise<{ outcome: "advanced"; node_key: string }> {
+  contact?: { phone?: string; name?: string },
+): Promise<
+  | { outcome: "advanced"; node_key: string }
+  | { outcome: "empty_fallback"; next_node_key: string }
+> {
   const cfg = node.config as unknown as SendListNodeConfig;
+
+  let sections: Array<{
+    title?: string;
+    rows: Array<{ id: string; title: string; description?: string }>;
+  }>;
+
+  if (cfg.dynamic) {
+    const rows = resolveVarArray(run.vars, cfg.dynamic.rows_var);
+    if (rows.length === 0) {
+      // Meta rejects a 0-row interactive list — degrade to a plain
+      // message and let the caller route to empty_next_node_key
+      // (typically a free-text collect_input fallback) instead of
+      // suspending on a list that was never sent.
+      const { whatsapp_message_id } = await engineSendText({
+        accountId: run.account_id,
+        userId: run.user_id,
+        conversationId: run.conversation_id!,
+        contactId: run.contact_id!,
+        text: interpolateVars(cfg.text, run.vars, contact),
+      });
+      await logEvent(db, run.id, "message_sent", node.node_key, {
+        node_type: "send_list",
+        whatsapp_message_id,
+        dynamic_rows: 0,
+      });
+      return {
+        outcome: "empty_fallback",
+        next_node_key: cfg.dynamic.empty_next_node_key,
+      };
+    }
+    sections = [{ rows }];
+  } else {
+    sections = cfg.sections.map((s) => ({
+      title: s.title,
+      rows: s.rows.map((r) => ({
+        id: r.reply_id,
+        title: r.title,
+        description: r.description,
+      })),
+    }));
+  }
+
   const { whatsapp_message_id } = await engineSendInteractiveList({
     accountId: run.account_id,
     userId: run.user_id,
@@ -408,14 +460,7 @@ async function sendListAndSuspend(
     buttonLabel: cfg.button_label,
     headerText: cfg.header_text,
     footerText: cfg.footer_text,
-    sections: cfg.sections.map((s) => ({
-      title: s.title,
-      rows: s.rows.map((r) => ({
-        id: r.reply_id,
-        title: r.title,
-        description: r.description,
-      })),
-    })),
+    sections,
   });
   await logEvent(db, run.id, "message_sent", node.node_key, {
     node_type: "send_list",
@@ -541,6 +586,27 @@ function interpolateVars(
   );
 }
 
+/**
+ * Resolves a dot-path ("avail.options") against flow_runs.vars — used by
+ * a dynamic send_list's `rows_var` to reach into a prior http_fetch's
+ * captured response (`response_var`). Returns `[]` for any missing/
+ * non-array segment rather than throwing — a malformed or not-yet-run
+ * fetch just looks like "no options" to the caller.
+ */
+function resolveVarArray(
+  vars: Record<string, unknown>,
+  path: string,
+): Array<{ id: string; title: string; description?: string }> {
+  let cur: unknown = vars;
+  for (const segment of path.split(".")) {
+    if (cur === null || typeof cur !== "object") return [];
+    cur = (cur as Record<string, unknown>)[segment];
+  }
+  return Array.isArray(cur)
+    ? (cur as Array<{ id: string; title: string; description?: string }>)
+    : [];
+}
+
 async function endRun(
   db: AdminClient,
   runId: string,
@@ -571,6 +637,20 @@ async function advanceFromNodeKey(
   nodes: Map<string, FlowNodeRow>,
 ): Promise<{ outcome: "advanced" | "completed" | "handed_off" }> {
   let currentKey: string | null = startNodeKey;
+
+  // Fetched once per invocation (not per node) — every interpolateVars
+  // call below shares it, so `{{contact.phone}}` / `{{contact.name}}`
+  // work the same in send_message/collect_input/send_media/http_fetch.
+  let contact: { phone?: string; name?: string } | undefined;
+  if (run.contact_id) {
+    const { data } = await db
+      .from("contacts")
+      .select("phone, name")
+      .eq("id", run.contact_id)
+      .maybeSingle();
+    if (data) contact = { phone: data.phone, name: data.name };
+  }
+
   // Defensive cap — if a flow has a cycle (which the validator
   // SHOULD catch but doesn't yet in v1), we bail rather than loop.
   for (let safety = 0; safety < 64; safety += 1) {
@@ -605,7 +685,7 @@ async function advanceFromNodeKey(
     userId: run.user_id,
           conversationId: run.conversation_id!,
           contactId: run.contact_id!,
-          text: interpolateVars(cfg.text, run.vars),
+          text: interpolateVars(cfg.text, run.vars, contact),
         });
         await logEvent(db, run.id, "message_sent", node.node_key, {
           node_type: "send_message",
@@ -633,7 +713,7 @@ async function advanceFromNodeKey(
           kind: cfg.media_type,
           link: cfg.media_url,
           caption: cfg.caption
-            ? interpolateVars(cfg.caption, run.vars)
+            ? interpolateVars(cfg.caption, run.vars, contact)
             : undefined,
           filename: cfg.filename,
         });
@@ -663,7 +743,7 @@ async function advanceFromNodeKey(
     userId: run.user_id,
           conversationId: run.conversation_id!,
           contactId: run.contact_id!,
-          text: interpolateVars(cfg.prompt_text, run.vars),
+          text: interpolateVars(cfg.prompt_text, run.vars, contact),
         });
         await logEvent(db, run.id, "message_sent", node.node_key, {
           node_type: "collect_input",
@@ -762,15 +842,6 @@ async function advanceFromNodeKey(
         if (!(await isDeliverableUrl(cfg.url))) {
           throw new Error("destination not allowed");
         }
-        let contact: { phone?: string; name?: string } | undefined;
-        if (run.contact_id) {
-          const { data } = await db
-            .from("contacts")
-            .select("phone, name")
-            .eq("id", run.contact_id)
-            .maybeSingle();
-          if (data) contact = { phone: data.phone, name: data.name };
-        }
         const method = cfg.method ?? "POST";
         const body =
           method !== "GET" && cfg.body_template
@@ -792,6 +863,19 @@ async function advanceFromNodeKey(
             reason: "http_fetch_non_ok",
             status: res.status,
           });
+        } else if (cfg.response_var) {
+          const contentType = res.headers.get("content-type") ?? "";
+          if (contentType.includes("application/json")) {
+            const parsed = await res.json().catch(() => null);
+            if (parsed !== null) {
+              const newVars = { ...run.vars, [cfg.response_var]: parsed };
+              const { error: capErr } = await db
+                .from("flow_runs")
+                .update({ vars: newVars })
+                .eq("id", run.id);
+              if (!capErr) run.vars = newVars;
+            }
+          }
         }
       } catch (err) {
         // Non-fatal — same reasoning as set_tag above: a failed call
@@ -822,7 +906,11 @@ async function advanceFromNodeKey(
       return { outcome: "advanced" };
     }
     if (node.node_type === "send_list") {
-      await sendListAndSuspend(db, run, node);
+      const result = await sendListAndSuspend(db, run, node, contact);
+      if (result.outcome === "empty_fallback") {
+        currentKey = result.next_node_key;
+        continue;
+      }
       const advanced = await advanceCurrentNodeKey(
         db,
         run.id,
@@ -1003,6 +1091,42 @@ async function handleReplyForActiveRun(
       currentNode.node_type === "send_list")
   ) {
     matched = matchReplyId(currentNode, message.reply_id);
+    if (matched) {
+      // Capture WHICH option was tapped, when the node asked for it —
+      // dynamic rows (capture_title_var/capture_id_var, resolved from
+      // the fetched array) and static rows/buttons (capture_var, a
+      // single literal per row/button) both land in the same
+      // flow_runs.vars update.
+      const captures: Record<string, unknown> = {};
+      if (currentNode.node_type === "send_list") {
+        const cfg = currentNode.config as unknown as SendListNodeConfig;
+        if (cfg.dynamic) {
+          const rows = resolveVarArray(run.vars, cfg.dynamic.rows_var);
+          const hit = rows.find((r) => r.id === message.reply_id);
+          if (hit) {
+            captures[cfg.dynamic.capture_title_var] = hit.title;
+            captures[cfg.dynamic.capture_id_var] = hit.id;
+          }
+        } else {
+          for (const section of cfg.sections ?? []) {
+            const row = section.rows?.find((r) => r.reply_id === message.reply_id);
+            if (row?.capture_var) captures[row.capture_var] = row.title;
+          }
+        }
+      } else {
+        const cfg = currentNode.config as unknown as SendButtonsNodeConfig;
+        const button = cfg.buttons?.find((b) => b.reply_id === message.reply_id);
+        if (button?.capture_var) captures[button.capture_var] = button.title;
+      }
+      if (Object.keys(captures).length > 0) {
+        const newVars = { ...run.vars, ...captures };
+        const { error: capErr } = await db
+          .from("flow_runs")
+          .update({ vars: newVars })
+          .eq("id", run.id);
+        if (!capErr) run.vars = newVars;
+      }
+    }
   } else if (
     message.kind === "text" &&
     currentNode.node_type === "collect_input"
@@ -1030,6 +1154,23 @@ async function handleReplyForActiveRun(
           captured_length: captured.length,
         });
         matched = cfg.next_node_key;
+      }
+      // Best-effort — remembering the answer on the contact itself so a
+      // LATER run (a new conversation) can skip re-asking via
+      // {{contact.x}} + a `contact_field present` condition. A failure
+      // here must not affect the flow's own advance, which already
+      // succeeded above.
+      if (cfg.persist_to_contact_field && run.contact_id) {
+        const { error: contactErr } = await db
+          .from("contacts")
+          .update({ [cfg.persist_to_contact_field]: captured })
+          .eq("id", run.contact_id);
+        if (contactErr) {
+          await logEvent(db, run.id, "error", currentNode.node_key, {
+            reason: "persist_to_contact_field_failed",
+            detail: contactErr.message,
+          });
+        }
       }
     }
   }
