@@ -60,7 +60,7 @@ export interface FlowTemplate {
   name: string;
   description: string;
   /** Used by the gallery to surface a relevant icon. lucide-react name. */
-  icon: "MessageSquare" | "HelpCircle" | "UserPlus";
+  icon: "MessageSquare" | "HelpCircle" | "UserPlus" | "Building2";
   trigger_type: "keyword" | "first_inbound_message" | "manual";
   trigger_config: KeywordTriggerConfig | Record<string, unknown>;
   entry_node_id: string;
@@ -286,6 +286,223 @@ const LEAD_CAPTURE: FlowTemplate = {
 };
 
 // ============================================================
+// 4. BSign Estudio — full business menu, tailored to the studio's
+//    real workflow (shop / design-appointment booking / portfolio /
+//    order status / hours / human handoff). Replaces the old "Bimi"
+//    fixed-reply bot (archived in pagina-estudio) with a real
+//    multi-turn WhatsApp chatbot.
+// ============================================================
+const BSIGN_MENU: FlowTemplate = {
+  slug: "bsign_estudio_menu",
+  name: "BSign Estudio — Menú principal",
+  description:
+    "Saluda, muestra el menú de servicios (catálogo, cita de diseño, proyectos, estado de pedido, horario) y traspasa a un asesor humano cuando hace falta.",
+  icon: "Building2",
+  trigger_type: "keyword",
+  trigger_config: {
+    keywords: [
+      "hola",
+      "buenas",
+      "buenos días",
+      "buenas tardes",
+      "buenas noches",
+      "menu",
+      "menú",
+      "ayuda",
+      "información",
+      "info",
+    ],
+    match_type: "contains",
+    case_sensitive: false,
+  } as KeywordTriggerConfig,
+  entry_node_id: "start",
+  nodes: [
+    { node_key: "start", node_type: "start", config: { next_node_key: "welcome" } },
+    {
+      node_key: "welcome",
+      node_type: "send_message",
+      config: {
+        text: "¡Hola! 👋 Soy el asistente de *BSign Estudio* — diseñamos espacios y creamos objetos en concreto, hechos a mano en Barranquilla. Cuéntame, ¿en qué te ayudo hoy?",
+        next_node_key: "main_menu",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "main_menu",
+      node_type: "send_list",
+      config: {
+        text: "Elige una opción y seguimos:",
+        button_label: "Ver opciones",
+        sections: [
+          {
+            title: "Nuestros servicios",
+            rows: [
+              {
+                reply_id: "catalogo",
+                title: "Ver catálogo",
+                description: "Piezas y objetos en concreto",
+                next_node_key: "catalogo_msg",
+              },
+              {
+                reply_id: "agendar",
+                title: "Agendar cita de diseño",
+                description: "Consultoría para tu espacio",
+                next_node_key: "agendar_intro",
+              },
+              {
+                reply_id: "proyectos",
+                title: "Ver proyectos",
+                description: "Conoce nuestro portafolio",
+                next_node_key: "proyectos_msg",
+              },
+              {
+                reply_id: "pedido",
+                title: "Estado de mi pedido",
+                description: "Consulta un pedido existente",
+                next_node_key: "pedido_ask_number",
+              },
+            ],
+          },
+          {
+            title: "Otros",
+            rows: [
+              {
+                reply_id: "horario",
+                title: "Horario y ubicación",
+                description: "Cuándo y dónde encontrarnos",
+                next_node_key: "horario_msg",
+              },
+              {
+                reply_id: "asesor",
+                title: "Hablar con un asesor",
+                description: "Te contacta el equipo humano",
+                next_node_key: "asesor_handoff",
+              },
+            ],
+          },
+        ],
+      } as SendListNodeConfig,
+    },
+    {
+      node_key: "catalogo_msg",
+      node_type: "send_message",
+      config: {
+        text: "Tenemos piezas de decoración, mobiliario y objetos en concreto hechos a mano 🧱. Puedes ver el catálogo completo aquí: https://bsignestudio.vercel.app/shop\n\nSi tienes dudas de una pieza (tamaños, colores, tiempos de entrega), cuéntame y te ayudo.",
+        next_node_key: "anything_else",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "proyectos_msg",
+      node_type: "send_message",
+      config: {
+        text: "Aquí puedes ver algunos de nuestros proyectos de diseño ya entregados: https://bsignestudio.vercel.app/proyectos 🖼️",
+        next_node_key: "anything_else",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "horario_msg",
+      node_type: "send_message",
+      config: {
+        text: "Atendemos de lunes a viernes de 9:00 a.m. a 6:00 p.m., y los sábados desde las 10:00 a.m. 📍 Estamos en Barranquilla, y si no puedes venir al estudio también agendamos videollamada por Google Meet.",
+        next_node_key: "anything_else",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "pedido_ask_number",
+      node_type: "collect_input",
+      config: {
+        prompt_text: "Claro, cuéntame el número de tu pedido (por ejemplo #1042). Lo encuentras en el correo de confirmación o en tu perfil.",
+        var_key: "order_number",
+        next_node_key: "pedido_handoff",
+      } as CollectInputNodeConfig,
+    },
+    {
+      node_key: "pedido_handoff",
+      node_type: "handoff",
+      config: {
+        note: "Cliente pregunta por el estado del pedido #{{vars.order_number}}. Revisar en el panel de administración y responder con el estado actual.",
+      } as HandoffNodeConfig,
+    },
+    {
+      node_key: "agendar_intro",
+      node_type: "send_message",
+      config: {
+        text: "¡Con gusto! Para tu cita de diseño te voy a hacer un par de preguntas rápidas, igual que en nuestro cuestionario. 🙂",
+        next_node_key: "agendar_espacio",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "agendar_espacio",
+      node_type: "collect_input",
+      config: {
+        prompt_text: "¿Qué tipo de espacio quieres transformar? Responde: Residencial, Comercial u Oficina.",
+        var_key: "space_type",
+        next_node_key: "agendar_nombre",
+      } as CollectInputNodeConfig,
+    },
+    {
+      node_key: "agendar_nombre",
+      node_type: "collect_input",
+      config: {
+        prompt_text: "Perfecto. ¿Cuál es tu nombre completo?",
+        var_key: "contact_name",
+        next_node_key: "agendar_sensacion",
+      } as CollectInputNodeConfig,
+    },
+    {
+      node_key: "agendar_sensacion",
+      node_type: "collect_input",
+      config: {
+        prompt_text: "Y cuéntame, ¿qué te gustaría sentir al entrar a ese espacio? (por ejemplo: calma, energía, orden, inspiración...)",
+        var_key: "feeling",
+        next_node_key: "agendar_link",
+      } as CollectInputNodeConfig,
+    },
+    {
+      node_key: "agendar_link",
+      node_type: "send_message",
+      config: {
+        text: "¡Genial, {{vars.contact_name}}! Ya tengo lo que necesito. Para elegir la fecha y hora que mejor te quede, completa tu cita aquí: https://bsignestudio.vercel.app/agendar 📅\n\nQueda sujeta a confirmación de nuestro equipo — te avisamos apenas quede lista.",
+        next_node_key: "agendar_handoff",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "agendar_handoff",
+      node_type: "handoff",
+      config: {
+        note: "Nueva solicitud de cita de diseño. Nombre: {{vars.contact_name}}. Espacio: {{vars.space_type}}. Sensación que busca: {{vars.feeling}}. Confirmar si ya agendó fecha/hora en /agendar o hacer seguimiento.",
+      } as HandoffNodeConfig,
+    },
+    {
+      node_key: "asesor_handoff",
+      node_type: "handoff",
+      config: {
+        note: "Cliente pidió hablar directamente con un asesor humano desde el menú principal.",
+      } as HandoffNodeConfig,
+    },
+    {
+      node_key: "anything_else",
+      node_type: "send_buttons",
+      config: {
+        text: "¿Te ayudo con algo más?",
+        buttons: [
+          { reply_id: "volver_menu", title: "Ver menú", next_node_key: "main_menu" },
+          { reply_id: "terminar", title: "No, gracias", next_node_key: "despedida" },
+        ],
+      } as SendButtonsNodeConfig,
+    },
+    {
+      node_key: "despedida",
+      node_type: "send_message",
+      config: {
+        text: "¡Gracias por escribirnos! 🙂 Quedamos atentos por aquí si necesitas algo más. ¡Que tengas un lindo día!",
+        next_node_key: "end",
+      } as SendMessageNodeConfig,
+    },
+    { node_key: "end", node_type: "end", config: {} },
+  ],
+};
+
+// ============================================================
 // Registry
 // ============================================================
 
@@ -293,6 +510,7 @@ const TEMPLATES: Record<string, FlowTemplate> = {
   welcome_menu: WELCOME_MENU,
   faq_bot: FAQ_BOT,
   lead_capture: LEAD_CAPTURE,
+  bsign_estudio_menu: BSIGN_MENU,
 };
 
 export function getFlowTemplate(slug: string): FlowTemplate | null {
