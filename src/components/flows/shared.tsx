@@ -27,6 +27,7 @@ import {
   PlayCircle,
   Tag,
   UserPlus,
+  Webhook,
   Workflow,
 } from 'lucide-react';
 
@@ -49,6 +50,7 @@ export type NodeType =
   | 'collect_input'
   | 'condition'
   | 'set_tag'
+  | 'http_fetch'
   | 'handoff'
   | 'end';
 
@@ -152,6 +154,13 @@ export const NODE_META: Record<
     blurb: 'Adds or removes a contact tag',
     category: 'logic',
   },
+  http_fetch: {
+    label: 'Call a URL',
+    icon: Webhook,
+    color: 'text-orange-400',
+    blurb: 'Calls an external API (e.g. create a booking elsewhere)',
+    category: 'logic',
+  },
   handoff: {
     label: 'Handoff to agent',
     icon: UserPlus,
@@ -205,6 +214,7 @@ const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
   collect_input: { l: 0.65, c: 0.1, h: 185 }, // teal — capture
   condition: { l: 0.72, c: 0.15, h: 65 }, // amber — a fork in the road
   set_tag: { l: 0.65, c: 0.15, h: 350 }, // pink
+  http_fetch: { l: 0.68, c: 0.16, h: 45 }, // orange — reaches outside wacrm
   handoff: { l: 0.65, c: 0.17, h: 16 }, // rose — hands off
   end: { l: 0.55, c: 0.01, h: 260 }, // neutral grey — terminal
 };
@@ -423,6 +433,11 @@ export function summarizeNode(
     case 'handoff': {
       const note = typeof cfg.note === 'string' ? cfg.note : '';
       return note.length > 0 ? truncate(note) : null;
+    }
+    case 'http_fetch': {
+      const url = typeof cfg.url === 'string' ? cfg.url : '';
+      const method = typeof cfg.method === 'string' ? cfg.method : 'POST';
+      return url.length > 0 ? `${method} ${truncate(url, 60)}` : null;
     }
   }
 }

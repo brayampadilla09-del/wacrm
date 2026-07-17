@@ -42,6 +42,7 @@ import {
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
+import { isDeliverableUrl } from "@/lib/webhooks/ssrf";
 import {
   type CollectInputNodeConfig,
   type ConditionNodeConfig,
@@ -50,6 +51,7 @@ import {
   type FlowNodeRow,
   type FlowRow,
   type FlowRunRow,
+  type HttpFetchNodeConfig,
   type ParsedInbound,
   type SendButtonsNodeConfig,
   type SendListNodeConfig,
@@ -118,7 +120,8 @@ export function isAutoAdvancing(node_type: string): boolean {
     node_type === "send_message" ||
     node_type === "send_media" ||
     node_type === "condition" ||
-    node_type === "set_tag"
+    node_type === "set_tag" ||
+    node_type === "http_fetch"
   );
 }
 
@@ -510,17 +513,32 @@ async function evaluateConditionNode(
 }
 
 /**
- * Tiny `{{vars.foo}}` interpolation. Used by send_message + collect_input
- * prompt text so a captured `name` can show up in the next prompt
- * ("Thanks {{vars.name}}, what's your email?"). Missing vars render as
- * empty string — the same behavior as the automations engine.
+ * Tiny `{{vars.foo}}` / `{{contact.phone}}` / `{{contact.name}}`
+ * interpolation. Used by send_message + collect_input prompt text
+ * (`contact` omitted there) so a captured `name` can show up in the
+ * next prompt ("Thanks {{vars.name}}, what's your email?"), and by
+ * http_fetch's body_template (`contact` passed) so it can reference the
+ * WhatsApp contact's own phone/name without the customer having typed
+ * it. Missing vars/fields render as empty string — same behavior as
+ * the automations engine's `interpolate()`.
  */
-function interpolateVars(template: string, vars: Record<string, unknown>): string {
+function interpolateVars(
+  template: string,
+  vars: Record<string, unknown>,
+  contact?: { phone?: string; name?: string },
+): string {
   if (!template) return "";
-  return template.replace(/\{\{vars\.([a-zA-Z0-9_]+)\}\}/g, (_, key) => {
-    const v = vars[key];
-    return v === undefined || v === null ? "" : String(v);
-  });
+  return template.replace(
+    /\{\{(vars|contact)\.([a-zA-Z0-9_]+)\}\}/g,
+    (_, ns: string, key: string) => {
+      if (ns === "contact") {
+        const v = contact?.[key as "phone" | "name"];
+        return v ?? "";
+      }
+      const v = vars[key];
+      return v === undefined || v === null ? "" : String(v);
+    },
+  );
 }
 
 async function endRun(
@@ -732,6 +750,55 @@ async function advanceFromNodeKey(
         // strand the customer mid-flow.
         await logEvent(db, run.id, "error", node.node_key, {
           reason: "set_tag_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+      currentKey = cfg.next_node_key;
+      continue;
+    }
+    if (node.node_type === "http_fetch") {
+      const cfg = node.config as unknown as HttpFetchNodeConfig;
+      try {
+        if (!(await isDeliverableUrl(cfg.url))) {
+          throw new Error("destination not allowed");
+        }
+        let contact: { phone?: string; name?: string } | undefined;
+        if (run.contact_id) {
+          const { data } = await db
+            .from("contacts")
+            .select("phone, name")
+            .eq("id", run.contact_id)
+            .maybeSingle();
+          if (data) contact = { phone: data.phone, name: data.name };
+        }
+        const method = cfg.method ?? "POST";
+        const body =
+          method !== "GET" && cfg.body_template
+            ? interpolateVars(cfg.body_template, run.vars, contact)
+            : undefined;
+        const res = await fetch(cfg.url, {
+          method,
+          headers: { "content-type": "application/json", ...(cfg.headers ?? {}) },
+          body,
+          redirect: "manual",
+          signal: AbortSignal.timeout(10_000),
+        });
+        await logEvent(db, run.id, "node_entered", node.node_key, {
+          node_type: "http_fetch",
+          status: res.status,
+        });
+        if (!res.ok) {
+          await logEvent(db, run.id, "error", node.node_key, {
+            reason: "http_fetch_non_ok",
+            status: res.status,
+          });
+        }
+      } catch (err) {
+        // Non-fatal — same reasoning as set_tag above: a failed call
+        // shouldn't strand the customer mid-conversation with no
+        // reply. Log it and keep going.
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "http_fetch_failed",
           detail: err instanceof Error ? err.message : String(err),
         });
       }

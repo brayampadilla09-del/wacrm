@@ -173,6 +173,27 @@ export interface SetTagNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Outbound HTTP call to an arbitrary URL — the Flows equivalent of
+ * Automations' `send_webhook` step (`src/lib/automations/engine.ts`,
+ * case `'send_webhook'`). Always auto-advances to `next_node_key`
+ * regardless of success/failure (mirrors `set_tag`'s non-fatal
+ * pattern) — a failed call is logged as a flow_run_event but never
+ * strands the customer mid-conversation with no reply.
+ */
+export interface HttpFetchNodeConfig {
+  url: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH";
+  headers?: Record<string, string>;
+  /**
+   * JSON-shaped string with `{{vars.x}}` / `{{contact.phone}}` /
+   * `{{contact.name}}` placeholders, interpolated before sending.
+   * Ignored for GET.
+   */
+  body_template?: string;
+  next_node_key: string;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -180,9 +201,6 @@ export type EndNodeConfig = Record<string, never>;
  * Total union — every concrete node_type the v1 engine understands.
  * Add new node types here and the engine's switch will flag missing
  * cases via TypeScript's exhaustiveness check.
- *
- * v1.5+ additions (collect_input, condition, set_tag, http_fetch) will
- * extend this union — out-of-scope for the v1 engine PR.
  */
 export type FlowNodeConfig =
   | { node_type: "start"; config: StartNodeConfig }
@@ -193,6 +211,7 @@ export type FlowNodeConfig =
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }
+  | { node_type: "http_fetch"; config: HttpFetchNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
   | { node_type: "end"; config: EndNodeConfig };
 

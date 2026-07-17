@@ -195,6 +195,16 @@ export function NodeConfigForm({
         />
       );
 
+    case "http_fetch":
+      return (
+        <HttpFetchForm
+          cfg={cfg as HttpFetchCfg}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+        />
+      );
+
     case "handoff":
       return (
         <TextRow
@@ -831,6 +841,107 @@ function SetTagForm({
         currentKey={currentKey}
         onChange={(v) => onUpdateConfig({ next_node_key: v })}
         label={t("thenAdvanceTo")}
+      />
+    </>
+  );
+}
+
+// ============================================================
+// http_fetch
+// ============================================================
+
+interface HttpFetchCfg {
+  url?: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH";
+  headers?: Record<string, string>;
+  body_template?: string;
+  next_node_key?: string;
+}
+
+/**
+ * No i18n keys here (unlike the other forms) — this node type ships
+ * after the current message catalogs were written, and the labels are
+ * plain enough (URL, method, body) that hardcoding them beats adding
+ * a new translation key per locale for a v1.
+ */
+function HttpFetchForm({
+  cfg,
+  allNodes,
+  currentKey,
+  onUpdateConfig,
+}: {
+  cfg: HttpFetchCfg;
+  allNodes: BuilderNode[];
+  currentKey: string;
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+}) {
+  const headersText = Object.entries(cfg.headers ?? {})
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+
+  return (
+    <>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">URL</label>
+        <Input
+          value={cfg.url ?? ""}
+          onChange={(e) => onUpdateConfig({ url: e.target.value })}
+          placeholder="https://example.com/api/..."
+          className="bg-muted font-mono text-xs"
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-xs text-muted-foreground">Method</label>
+          <Select
+            value={cfg.method ?? "POST"}
+            onValueChange={(v) => onUpdateConfig({ method: v as HttpFetchCfg["method"] })}
+          >
+            <SelectTrigger className="bg-muted">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="GET">GET</SelectItem>
+              <SelectItem value="POST">POST</SelectItem>
+              <SelectItem value="PUT">PUT</SelectItem>
+              <SelectItem value="PATCH">PATCH</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-muted-foreground">
+            Headers (one per line, &quot;Name: value&quot;)
+          </label>
+          <Input
+            value={headersText}
+            onChange={(e) => {
+              const headers: Record<string, string> = {};
+              for (const line of e.target.value.split("\n")) {
+                const idx = line.indexOf(":");
+                if (idx === -1) continue;
+                const key = line.slice(0, idx).trim();
+                const value = line.slice(idx + 1).trim();
+                if (key) headers[key] = value;
+              }
+              onUpdateConfig({ headers });
+            }}
+            placeholder="Authorization: Bearer ..."
+            className="bg-muted font-mono text-xs"
+          />
+        </div>
+      </div>
+      <TextRow
+        label='Body (JSON — use {{vars.x}} / {{contact.phone}} / {{contact.name}})'
+        value={cfg.body_template ?? ""}
+        onChange={(v) => onUpdateConfig({ body_template: v })}
+        rows={4}
+      />
+      <NextNodeRow
+        value={cfg.next_node_key ?? ""}
+        allNodes={allNodes}
+        currentKey={currentKey}
+        onChange={(v) => onUpdateConfig({ next_node_key: v })}
+        label="Then advance to"
       />
     </>
   );
