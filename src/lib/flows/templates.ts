@@ -296,7 +296,7 @@ const BSIGN_MENU: FlowTemplate = {
   slug: "bsign_estudio_menu",
   name: "BSign Estudio — Menú principal",
   description:
-    "Saluda, muestra el menú de servicios (catálogo, cita de diseño, proyectos, estado de pedido, horario) y traspasa a un asesor humano cuando hace falta.",
+    "Saluda, muestra el menú de servicios y redirige al sitio web para comprar, agendar cita o ver el estado de un pedido — solo traspasa a un asesor humano si el cliente lo pide.",
   icon: "Building2",
   trigger_type: "keyword",
   trigger_config: {
@@ -346,7 +346,7 @@ const BSIGN_MENU: FlowTemplate = {
                 reply_id: "agendar",
                 title: "Agendar cita de diseño",
                 description: "Consultoría para tu espacio",
-                next_node_key: "agendar_intro",
+                next_node_key: "agendar_msg",
               },
               {
                 reply_id: "proyectos",
@@ -358,7 +358,7 @@ const BSIGN_MENU: FlowTemplate = {
                 reply_id: "pedido",
                 title: "Estado de mi pedido",
                 description: "Consulta un pedido existente",
-                next_node_key: "pedido_ask_number",
+                next_node_key: "pedido_msg",
               },
             ],
           },
@@ -407,70 +407,20 @@ const BSIGN_MENU: FlowTemplate = {
       } as SendMessageNodeConfig,
     },
     {
-      node_key: "pedido_ask_number",
-      node_type: "collect_input",
-      config: {
-        prompt_text: "Claro, cuéntame el número de tu pedido (por ejemplo #1042). Lo encuentras en el correo de confirmación o en tu perfil.",
-        var_key: "order_number",
-        next_node_key: "pedido_handoff",
-      } as CollectInputNodeConfig,
-    },
-    {
-      node_key: "pedido_handoff",
-      node_type: "handoff",
-      config: {
-        note: "Cliente pregunta por el estado del pedido #{{vars.order_number}}. Revisar en el panel de administración y responder con el estado actual.",
-      } as HandoffNodeConfig,
-    },
-    {
-      node_key: "agendar_intro",
+      node_key: "pedido_msg",
       node_type: "send_message",
       config: {
-        text: "¡Con gusto! Para tu cita de diseño te voy a hacer un par de preguntas rápidas, igual que en nuestro cuestionario. 🙂",
-        next_node_key: "agendar_espacio",
+        text: "Puedes ver el estado y la línea de tiempo completa de todos tus pedidos aquí: https://bsignestudio.vercel.app/profile/orders 📦\n\nInicia sesión con el mismo correo o WhatsApp de la compra y ahí verás el detalle actualizado al instante.",
+        next_node_key: "anything_else",
       } as SendMessageNodeConfig,
     },
     {
-      node_key: "agendar_espacio",
-      node_type: "collect_input",
-      config: {
-        prompt_text: "¿Qué tipo de espacio quieres transformar? Responde: Residencial, Comercial u Oficina.",
-        var_key: "space_type",
-        next_node_key: "agendar_nombre",
-      } as CollectInputNodeConfig,
-    },
-    {
-      node_key: "agendar_nombre",
-      node_type: "collect_input",
-      config: {
-        prompt_text: "Perfecto. ¿Cuál es tu nombre completo?",
-        var_key: "contact_name",
-        next_node_key: "agendar_sensacion",
-      } as CollectInputNodeConfig,
-    },
-    {
-      node_key: "agendar_sensacion",
-      node_type: "collect_input",
-      config: {
-        prompt_text: "Y cuéntame, ¿qué te gustaría sentir al entrar a ese espacio? (por ejemplo: calma, energía, orden, inspiración...)",
-        var_key: "feeling",
-        next_node_key: "agendar_link",
-      } as CollectInputNodeConfig,
-    },
-    {
-      node_key: "agendar_link",
+      node_key: "agendar_msg",
       node_type: "send_message",
       config: {
-        text: "¡Genial, {{vars.contact_name}}! Ya tengo lo que necesito. Para elegir la fecha y hora que mejor te quede, completa tu cita aquí: https://bsignestudio.vercel.app/agendar 📅\n\nQueda sujeta a confirmación de nuestro equipo — te avisamos apenas quede lista.",
-        next_node_key: "agendar_handoff",
+        text: "¡Con gusto! Agenda tu cita de diseño directo aquí — eliges el tipo de espacio y el horario que mejor te quede: https://bsignestudio.vercel.app/agendar 📅\n\nToma un par de minutos y queda sujeta a confirmación de nuestro equipo, te avisamos apenas quede lista.",
+        next_node_key: "anything_else",
       } as SendMessageNodeConfig,
-    },
-    {
-      node_key: "agendar_handoff",
-      node_type: "handoff",
-      config: {
-        note: "Nueva solicitud de cita de diseño. Nombre: {{vars.contact_name}}. Espacio: {{vars.space_type}}. Sensación que busca: {{vars.feeling}}. Confirmar si ya agendó fecha/hora en /agendar o hacer seguimiento.",
-      } as HandoffNodeConfig,
     },
     {
       node_key: "asesor_handoff",
