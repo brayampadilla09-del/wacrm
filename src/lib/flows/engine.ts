@@ -948,7 +948,24 @@ async function advanceFromNodeKey(
       continue;
     }
     if (node.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(db, run, node, contact);
+      try {
+        await sendButtonsAndSuspend(db, run, node, contact);
+      } catch (err) {
+        // Same reasoning as send_message/send_media above — without
+        // this, a transient Meta API failure here throws uncaught all
+        // the way to dispatchInboundToFlows' catch-all, which reports
+        // consumed:false without ever ending the run. The run is left
+        // "active" at whatever node_key it had *before* this attempt
+        // (current_node_key is only written by advanceCurrentNodeKey
+        // below, which never runs), so the customer is stuck replying
+        // to a stale prompt forever with no visible reaction at all.
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "send_buttons_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        await endRun(db, run.id, "failed", "send_buttons_failed");
+        return { outcome: "completed" };
+      }
       // Persist the new current_node_key via optimistic UPDATE.
       const advanced = await advanceCurrentNodeKey(
         db,
@@ -964,7 +981,18 @@ async function advanceFromNodeKey(
       return { outcome: "advanced" };
     }
     if (node.node_type === "send_list") {
-      const result = await sendListAndSuspend(db, run, node, contact);
+      let result: Awaited<ReturnType<typeof sendListAndSuspend>>;
+      try {
+        result = await sendListAndSuspend(db, run, node, contact);
+      } catch (err) {
+        // Same reasoning as send_buttons above.
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "send_list_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        await endRun(db, run.id, "failed", "send_list_failed");
+        return { outcome: "completed" };
+      }
       if (result.outcome === "empty_fallback") {
         currentKey = result.next_node_key;
         continue;
@@ -1297,11 +1325,44 @@ async function handleReplyForActiveRun(
       if (data) contact = { phone: data.phone, name: data.name, email: data.email, full_name: data.full_name };
     }
 
+    // Antes de reenviar las opciones, aclaramos que no entendimos el mensaje
+    // libre que mandaron — sin esto, quien le escribe al bot como si fuera
+    // una persona solo ve las mismas opciones de nuevo, sin explicación, y
+    // asume que el bot lo ignoró o está roto.
+    try {
+      await engineSendText({
+        accountId: run.account_id,
+        userId: run.user_id,
+        conversationId: run.conversation_id!,
+        contactId: run.contact_id!,
+        text: "Disculpa, no logré entender tu mensaje 🙏 Por favor elige una de las opciones de abajo.",
+      });
+    } catch (err) {
+      await logEvent(db, run.id, "error", currentNode.node_key, {
+        reason: "reprompt_clarify_send_failed",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     // Re-send the same prompt. Same node, no current_node_key change.
     if (currentNode.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(db, run, currentNode, contact);
+      try {
+        await sendButtonsAndSuspend(db, run, currentNode, contact);
+      } catch (err) {
+        await logEvent(db, run.id, "error", currentNode.node_key, {
+          reason: "reprompt_send_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
     } else if (currentNode.node_type === "send_list") {
-      await sendListAndSuspend(db, run, currentNode, contact);
+      try {
+        await sendListAndSuspend(db, run, currentNode, contact);
+      } catch (err) {
+        await logEvent(db, run.id, "error", currentNode.node_key, {
+          reason: "reprompt_send_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
     } else if (currentNode.node_type === "collect_input") {
       // Customer typed something we couldn't accept (empty after trim,
       // or var_key missing — rare). Re-send the prompt so they try again.
