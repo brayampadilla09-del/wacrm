@@ -177,7 +177,7 @@ export interface CollectInputNodeConfig {
    * again (pair with a `condition` node on `contact_field` `present`
    * before this node to skip re-asking).
    */
-  persist_to_contact_field?: "name" | "email" | "company";
+  persist_to_contact_field?: "name" | "email" | "company" | "full_name";
 }
 
 export type ConditionOperator =
@@ -198,7 +198,7 @@ export interface ConditionNodeConfig {
   /**
    * For `var`: the key in flow_runs.vars.
    * For `tag`: the tag UUID (matched against contact_tags).
-   * For `contact_field`: one of 'name' | 'email' | 'phone' | 'company'.
+   * For `contact_field`: one of 'name' | 'email' | 'phone' | 'company' | 'full_name'.
    */
   subject_key: string;
   operator: ConditionOperator;

@@ -367,6 +367,7 @@ async function sendButtonsAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
+  contact?: { phone?: string; name?: string; email?: string; full_name?: string },
 ): Promise<{ outcome: "advanced"; node_key: string }> {
   const cfg = node.config as unknown as SendButtonsNodeConfig;
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
@@ -374,7 +375,7 @@ async function sendButtonsAndSuspend(
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText: cfg.text,
+    bodyText: interpolateVars(cfg.text, run.vars, contact),
     headerText: cfg.header_text,
     footerText: cfg.footer_text,
     buttons: cfg.buttons.map((b) => ({ id: b.reply_id, title: b.title })),
@@ -403,7 +404,7 @@ async function sendListAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
-  contact?: { phone?: string; name?: string; email?: string },
+  contact?: { phone?: string; name?: string; email?: string; full_name?: string },
 ): Promise<
   | { outcome: "advanced"; node_key: string }
   | { outcome: "empty_fallback"; next_node_key: string }
@@ -514,7 +515,7 @@ async function executeHandoff(
  *     or http_fetch in v2).
  *   - `tag` → present iff `contact_tags(contact_id, tag_id)` exists.
  *     `subject_key` IS the tag UUID; the SELECT returns 1 row or 0.
- *   - `contact_field` → one of name/email/phone/company on `contacts`.
+ *   - `contact_field` → one of name/email/phone/company/full_name on `contacts`.
  */
 async function evaluateConditionNode(
   db: AdminClient,
@@ -537,7 +538,7 @@ async function evaluateConditionNode(
     // existence to the value).
     subjectValue = (count ?? 0) > 0 ? cfg.subject_key : undefined;
   } else {
-    const ALLOWED = ["name", "email", "phone", "company"] as const;
+    const ALLOWED = ["name", "email", "phone", "company", "full_name"] as const;
     type AllowedField = (typeof ALLOWED)[number];
     if (!ALLOWED.includes(cfg.subject_key as AllowedField)) {
       throw new Error(`unsupported contact_field: ${cfg.subject_key}`);
@@ -570,14 +571,14 @@ async function evaluateConditionNode(
 function interpolateVars(
   template: string,
   vars: Record<string, unknown>,
-  contact?: { phone?: string; name?: string; email?: string },
+  contact?: { phone?: string; name?: string; email?: string; full_name?: string },
 ): string {
   if (!template) return "";
   return template.replace(
     /\{\{(vars|contact)\.([a-zA-Z0-9_]+)\}\}/g,
     (_, ns: string, key: string) => {
       if (ns === "contact") {
-        const v = contact?.[key as "phone" | "name" | "email"];
+        const v = contact?.[key as "phone" | "name" | "email" | "full_name"];
         return v ?? "";
       }
       const v = vars[key];
@@ -641,14 +642,14 @@ async function advanceFromNodeKey(
   // Fetched once per invocation (not per node) — every interpolateVars
   // call below shares it, so `{{contact.phone}}` / `{{contact.name}}`
   // work the same in send_message/collect_input/send_media/http_fetch.
-  let contact: { phone?: string; name?: string; email?: string } | undefined;
+  let contact: { phone?: string; name?: string; email?: string; full_name?: string } | undefined;
   if (run.contact_id) {
     const { data } = await db
       .from("contacts")
-      .select("phone, name, email")
+      .select("phone, name, email, full_name")
       .eq("id", run.contact_id)
       .maybeSingle();
-    if (data) contact = { phone: data.phone, name: data.name, email: data.email };
+    if (data) contact = { phone: data.phone, name: data.name, email: data.email, full_name: data.full_name };
   }
 
   // Defensive cap — if a flow has a cycle (which the validator
@@ -890,7 +891,7 @@ async function advanceFromNodeKey(
       continue;
     }
     if (node.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(db, run, node);
+      await sendButtonsAndSuspend(db, run, node, contact);
       // Persist the new current_node_key via optimistic UPDATE.
       const advanced = await advanceCurrentNodeKey(
         db,
@@ -1218,11 +1219,23 @@ async function handleReplyForActiveRun(
     return { consumed: false, flow_run_id: run.id, outcome: "no_match" };
   }
   if (action.type === "reprompt") {
+    // Same contact lookup as advanceFromNodeKey's — needed so a reprompt's
+    // {{contact.x}} interpolates the same as the first send did.
+    let contact: { phone?: string; name?: string; email?: string; full_name?: string } | undefined;
+    if (run.contact_id) {
+      const { data } = await db
+        .from("contacts")
+        .select("phone, name, email, full_name")
+        .eq("id", run.contact_id)
+        .maybeSingle();
+      if (data) contact = { phone: data.phone, name: data.name, email: data.email, full_name: data.full_name };
+    }
+
     // Re-send the same prompt. Same node, no current_node_key change.
     if (currentNode.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(db, run, currentNode);
+      await sendButtonsAndSuspend(db, run, currentNode, contact);
     } else if (currentNode.node_type === "send_list") {
-      await sendListAndSuspend(db, run, currentNode);
+      await sendListAndSuspend(db, run, currentNode, contact);
     } else if (currentNode.node_type === "collect_input") {
       // Customer typed something we couldn't accept (empty after trim,
       // or var_key missing — rare). Re-send the prompt so they try again.
@@ -1233,7 +1246,7 @@ async function handleReplyForActiveRun(
     userId: run.user_id,
           conversationId: run.conversation_id!,
           contactId: run.contact_id!,
-          text: interpolateVars(cfg.prompt_text, run.vars),
+          text: interpolateVars(cfg.prompt_text, run.vars, contact),
         });
       } catch (err) {
         await logEvent(db, run.id, "error", currentNode.node_key, {
