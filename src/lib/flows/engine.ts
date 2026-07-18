@@ -98,6 +98,63 @@ export function matchReplyId(
 }
 
 /**
+ * Best-effort match of a typed free-text reply against a
+ * send_buttons/send_list node's option titles. Customers often type
+ * "no gracias" instead of tapping the actual button — without this,
+ * that reply matches nothing, so `handleReplyForActiveRun` falls
+ * through to the fallback policy (reprompt/handoff/end) instead of
+ * advancing like a real tap would.
+ *
+ * Case/accent-insensitive; matches when the (normalized) reply equals
+ * an option's title, or one contains the other ("no" matching
+ * "No, gracias"). Dynamic send_list rows aren't known at match time
+ * (they come from a prior http_fetch), so text fallback only covers
+ * static buttons/rows. Returns null — not a guess — when zero or more
+ * than one option matches, so an ambiguous reply still falls through
+ * to the fallback policy rather than picking the wrong branch.
+ */
+export function matchButtonTextReply(
+  node: { node_type: string; config: Record<string, unknown> },
+  text: string,
+): string | null {
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "") // acentos
+      .replace(/[^\p{L}\p{N}\s]/gu, "") // puntuación ("no gracias" debe calzar con "No, gracias")
+      .replace(/\s+/g, " ")
+      .trim();
+  const needle = normalize(text);
+  if (!needle) return null;
+
+  let options: { reply_id: string; title: string }[] = [];
+  if (node.node_type === "send_buttons") {
+    const cfg = node.config as unknown as SendButtonsNodeConfig;
+    options = (cfg.buttons ?? []).map((b) => ({
+      reply_id: b.reply_id,
+      title: b.title,
+    }));
+  } else if (node.node_type === "send_list") {
+    const cfg = node.config as unknown as SendListNodeConfig;
+    if (cfg.dynamic) return null;
+    for (const section of cfg.sections ?? []) {
+      for (const row of section.rows ?? []) {
+        options.push({ reply_id: row.reply_id, title: row.title });
+      }
+    }
+  } else {
+    return null;
+  }
+
+  const hits = options.filter((o) => {
+    const title = normalize(o.title);
+    return title === needle || title.includes(needle) || needle.includes(title);
+  });
+  return hits.length === 1 ? hits[0].reply_id : null;
+}
+
+/**
  * Case-insensitive contains/exact match against a list of keywords.
  * Used by the trigger evaluator. Stable enough that the v3 builder
  * UI can preview matches by passing canned strings.
@@ -1080,18 +1137,27 @@ async function handleReplyForActiveRun(
     return { consumed: true, flow_run_id: run.id, outcome: "no_match" };
   }
 
-  // Two ways a reply can advance:
+  // Three ways a reply can advance:
   //   1. Interactive button/list tap on a send_buttons/send_list node.
-  //   2. Text reply on a collect_input node — capture into vars.
+  //   2. Typed text that matches an option's title on that same kind of
+  //      node ("no gracias" for a "No, gracias" button) — see
+  //      matchButtonTextReply; customers reply in words as often as
+  //      they tap, especially when replying to an older bubble.
+  //   3. Text reply on a collect_input node — capture into vars.
   //
   // Everything else falls through to the fallback policy below.
   let matched: string | null = null;
-  if (
-    message.kind === "interactive_reply" &&
-    (currentNode.node_type === "send_buttons" ||
-      currentNode.node_type === "send_list")
-  ) {
-    matched = matchReplyId(currentNode, message.reply_id);
+  const isButtonNode =
+    currentNode.node_type === "send_buttons" ||
+    currentNode.node_type === "send_list";
+  const resolvedReplyId: string | null =
+    message.kind === "interactive_reply" && isButtonNode
+      ? message.reply_id
+      : message.kind === "text" && isButtonNode
+        ? matchButtonTextReply(currentNode, message.text)
+        : null;
+  if (resolvedReplyId) {
+    matched = matchReplyId(currentNode, resolvedReplyId);
     if (matched) {
       // Capture WHICH option was tapped, when the node asked for it —
       // dynamic rows (capture_title_var/capture_id_var, resolved from
@@ -1103,20 +1169,20 @@ async function handleReplyForActiveRun(
         const cfg = currentNode.config as unknown as SendListNodeConfig;
         if (cfg.dynamic) {
           const rows = resolveVarArray(run.vars, cfg.dynamic.rows_var);
-          const hit = rows.find((r) => r.id === message.reply_id);
+          const hit = rows.find((r) => r.id === resolvedReplyId);
           if (hit) {
             captures[cfg.dynamic.capture_title_var] = hit.title;
             captures[cfg.dynamic.capture_id_var] = hit.id;
           }
         } else {
           for (const section of cfg.sections ?? []) {
-            const row = section.rows?.find((r) => r.reply_id === message.reply_id);
+            const row = section.rows?.find((r) => r.reply_id === resolvedReplyId);
             if (row?.capture_var) captures[row.capture_var] = row.title;
           }
         }
       } else {
         const cfg = currentNode.config as unknown as SendButtonsNodeConfig;
-        const button = cfg.buttons?.find((b) => b.reply_id === message.reply_id);
+        const button = cfg.buttons?.find((b) => b.reply_id === resolvedReplyId);
         if (button?.capture_var) captures[button.capture_var] = button.title;
       }
       if (Object.keys(captures).length > 0) {
