@@ -403,7 +403,7 @@ async function sendListAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
-  contact?: { phone?: string; name?: string },
+  contact?: { phone?: string; name?: string; email?: string },
 ): Promise<
   | { outcome: "advanced"; node_key: string }
   | { outcome: "empty_fallback"; next_node_key: string }
@@ -570,14 +570,14 @@ async function evaluateConditionNode(
 function interpolateVars(
   template: string,
   vars: Record<string, unknown>,
-  contact?: { phone?: string; name?: string },
+  contact?: { phone?: string; name?: string; email?: string },
 ): string {
   if (!template) return "";
   return template.replace(
     /\{\{(vars|contact)\.([a-zA-Z0-9_]+)\}\}/g,
     (_, ns: string, key: string) => {
       if (ns === "contact") {
-        const v = contact?.[key as "phone" | "name"];
+        const v = contact?.[key as "phone" | "name" | "email"];
         return v ?? "";
       }
       const v = vars[key];
@@ -641,14 +641,14 @@ async function advanceFromNodeKey(
   // Fetched once per invocation (not per node) — every interpolateVars
   // call below shares it, so `{{contact.phone}}` / `{{contact.name}}`
   // work the same in send_message/collect_input/send_media/http_fetch.
-  let contact: { phone?: string; name?: string } | undefined;
+  let contact: { phone?: string; name?: string; email?: string } | undefined;
   if (run.contact_id) {
     const { data } = await db
       .from("contacts")
-      .select("phone, name")
+      .select("phone, name, email")
       .eq("id", run.contact_id)
       .maybeSingle();
-    if (data) contact = { phone: data.phone, name: data.name };
+    if (data) contact = { phone: data.phone, name: data.name, email: data.email };
   }
 
   // Defensive cap — if a flow has a cycle (which the validator
