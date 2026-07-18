@@ -910,7 +910,16 @@ async function advanceFromNodeKey(
           headers: { "content-type": "application/json", ...(cfg.headers ?? {}) },
           body,
           redirect: "manual",
-          signal: AbortSignal.timeout(10_000),
+          // 35s, not 10s: nodes like pagina-estudio's booking create/cancel
+          // endpoints now deliberately await sending a WhatsApp template
+          // before responding (so the Flow's own follow-up messages can't
+          // race ahead of it) — that chain can take several seconds, and
+          // those endpoints run with a 30s maxDuration. A shorter timeout
+          // here would give up before they're done, making the Flow move
+          // on to its next node while the "real" confirmation is still in
+          // flight — the exact race this was meant to prevent. This
+          // webhook route has its own maxDuration = 60, so there's room.
+          signal: AbortSignal.timeout(35_000),
         });
         await logEvent(db, run.id, "node_entered", node.node_key, {
           node_type: "http_fetch",
