@@ -44,6 +44,7 @@ import {
 } from '@/lib/whatsapp/phone-utils';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import { renderTemplateBody } from '@/lib/whatsapp/template-render';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -448,13 +449,33 @@ export async function sendMessageToConversation(
   const interactiveBody =
     messageType === 'interactive' ? interactivePayload!.body : null;
 
+  // Template messages: the dashboard composer pre-renders the body and
+  // passes it as `contentText` (see message-thread.tsx), but the public
+  // API (`/api/v1/messages`, used by external automations like the
+  // pagina-estudio bot) only ever sends raw positional/structured
+  // params — never rendered text — so `contentText` is null there.
+  // Render it ourselves from the template row whenever one was found,
+  // so a bot-sent template shows real text in the inbox instead of a
+  // blank bubble. Falls back to whatever the caller passed when no
+  // local template row matched (rare — Meta still accepts the send).
+  const templateBodyParams =
+    (templateMessageParams as { body?: string[] } | undefined)?.body ??
+    templateParams ??
+    [];
+  const renderedTemplateText =
+    messageType === 'template' && templateRow
+      ? renderTemplateBody(templateRow.body_text, templateBodyParams)
+      : null;
+
+  const resolvedContentText = renderedTemplateText ?? contentText;
+
   const { data: messageRecord, error: msgError } = await db
     .from('messages')
     .insert({
       conversation_id: conversationId,
       sender_type: 'agent',
       content_type: messageType,
-      content_text: interactiveBody ?? contentText ?? null,
+      content_text: interactiveBody ?? resolvedContentText ?? null,
       media_url: mediaUrl || null,
       template_name: templateName || null,
       interactive_payload:
@@ -478,7 +499,7 @@ export async function sendMessageToConversation(
   const lastMessageText =
     messageType === 'interactive'
       ? interactivePayloadPreviewText(interactivePayload!)
-      : contentText || `[${messageType}]`;
+      : resolvedContentText || `[${messageType}]`;
 
   await db
     .from('conversations')

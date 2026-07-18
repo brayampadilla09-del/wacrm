@@ -11,6 +11,7 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { renderTemplateBody } from '@/lib/whatsapp/template-render'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -104,16 +105,6 @@ export async function engineSendInteractive(
 type SendInput =
   | (SendTextArgs & { kind: 'text' })
   | (SendTemplateArgs & { kind: 'template' })
-
-// Same {{1}}, {{2}}, … substitution as the composer's renderTemplateBody
-// (src/components/inbox/message-thread.tsx) — kept in sync so an
-// automation-sent template reads the same in the inbox as a manual one.
-function renderTemplateBody(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1
-    return params[idx] ?? `{{${raw}}}`
-  })
-}
 
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
