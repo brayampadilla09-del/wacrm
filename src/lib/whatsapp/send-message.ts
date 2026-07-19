@@ -85,6 +85,20 @@ export interface SendMessageParams {
   /** Structured payload for `messageType === 'interactive'`. */
   interactivePayload?: InteractiveMessagePayload | null;
   replyToMessageId?: string | null;
+  /**
+   * Skip the "pause any active Flow run for this contact" side effect
+   * below. Default false — a human agent replying from the dashboard
+   * (or an external caller acting on a human's behalf) is the normal
+   * case, and should still yield the bot. Set true only when the
+   * caller IS the same automation that owns the conversation (e.g. an
+   * order/booking system sending a status-update template as *part of*
+   * the flow it's already running) — for that caller, "pause because a
+   * message was sent" is backwards: it would kill the very Flow run
+   * that's waiting on this send's HTTP response to continue, and every
+   * later reply from the customer would then match no active run at
+   * all (see `/api/v1/messages`'s `skip_flow_pause` body field).
+   */
+  skipFlowPause?: boolean;
 }
 
 export interface SendMessageResult {
@@ -198,6 +212,7 @@ export async function sendMessageToConversation(
     templateMessageParams,
     interactivePayload,
     replyToMessageId,
+    skipFlowPause,
   } = params;
 
   if (!conversationId) {
@@ -512,25 +527,33 @@ export async function sendMessageToConversation(
 
   // Pause any active Flow run for this contact — the agent stepping in
   // is the strongest "yield, human is here" signal. Best-effort.
-  try {
-    const { error: pauseErr } = await supabaseAdmin()
-      .from('flow_runs')
-      .update({
-        status: 'paused_by_agent',
-        ended_at: new Date().toISOString(),
-        end_reason: 'agent_replied',
-      })
-      .eq('account_id', accountId)
-      .eq('contact_id', contact.id)
-      .eq('status', 'active');
-    if (pauseErr) {
-      console.error('[flows] pause-on-agent-send failed:', pauseErr.message);
+  // Skipped when the caller flags this as a Flow-owned automated send
+  // (see `skipFlowPause` on SendMessageParams) — otherwise a booking/
+  // order system sending its own status-update template through this
+  // same shared core would pause (and effectively kill) the very Flow
+  // run that's mid-flight waiting on this send to finish, silencing the
+  // bot for that contact from then on.
+  if (!skipFlowPause) {
+    try {
+      const { error: pauseErr } = await supabaseAdmin()
+        .from('flow_runs')
+        .update({
+          status: 'paused_by_agent',
+          ended_at: new Date().toISOString(),
+          end_reason: 'agent_replied',
+        })
+        .eq('account_id', accountId)
+        .eq('contact_id', contact.id)
+        .eq('status', 'active');
+      if (pauseErr) {
+        console.error('[flows] pause-on-agent-send failed:', pauseErr.message);
+      }
+    } catch (err) {
+      console.error(
+        '[flows] pause-on-agent-send threw:',
+        err instanceof Error ? err.message : err
+      );
     }
-  } catch (err) {
-    console.error(
-      '[flows] pause-on-agent-send threw:',
-      err instanceof Error ? err.message : err
-    );
   }
 
   return { messageId: messageRecord.id, whatsappMessageId: waMessageId };

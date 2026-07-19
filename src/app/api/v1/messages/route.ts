@@ -23,8 +23,18 @@
 //       "params": ["A123"] | { "body": [...] }   // array = positional body; object = structured
 //     },
 //     "reply_to_message_id": "<uuid>",       // optional, must be in the same conversation
-//     "name": "Jane Doe"                     // optional, names a newly-created contact
+//     "name": "Jane Doe",                    // optional, names a newly-created contact
+//     "skip_flow_pause": false               // optional, default false — see below
 //   }
+//
+// skip_flow_pause: by default, sending a message to a contact through
+// this endpoint pauses any active Flow run for them (same as a human
+// agent replying from the dashboard — "someone is handling this now").
+// Set true only when the caller IS the automation that owns the
+// conversation (e.g. a booking/order system sending its own status
+// template as part of the same flow the bot is running) — otherwise
+// this send would pause the very Flow run that's waiting on it,
+// silencing the bot for that contact afterward.
 //
 // Response (201):
 //   { "data": { "message_id", "whatsapp_message_id", "conversation_id",
@@ -124,6 +134,7 @@ export async function POST(request: Request) {
           typeof body.reply_to_message_id === 'string'
             ? body.reply_to_message_id
             : null,
+        skipFlowPause: body.skip_flow_pause === true,
       }
     );
 

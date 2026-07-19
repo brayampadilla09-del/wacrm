@@ -26,7 +26,21 @@ import crypto from 'crypto'
  *   `src/app/api/whatsapp/send/route.ts`.
  */
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY!
+// Required, and validated eagerly (not just `!`-asserted at compile
+// time): without this, a deployment missing the env var would only
+// discover it the first time a token is encrypted/decrypted, as a bare
+// `Buffer.from(undefined, 'hex')` TypeError with no indication of what
+// was actually wrong. Same "fail loudly at the source" reasoning as
+// META_APP_SECRET in webhook-signature.ts. 64 hex chars = 32 bytes,
+// the key length aes-256-gcm/aes-256-cbc require.
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?? ''
+if (!/^[0-9a-fA-F]{64}$/.test(ENCRYPTION_KEY)) {
+  throw new Error(
+    'ENCRYPTION_KEY is missing or malformed — it must be exactly 64 hex characters ' +
+      '(32 bytes, for aes-256-gcm). Generate one with: ' +
+      'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+  )
+}
 // 12 bytes is the NIST-recommended IV length for GCM — keeps the
 // counter block well below 2^32 and matches the default web-crypto
 // behaviour, so any future port is straightforward.

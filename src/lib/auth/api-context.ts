@@ -34,7 +34,7 @@ import { findActiveKeyByHash, touchLastUsed } from '@/lib/api-keys/store';
 import { hashApiKey, looksLikeApiKey } from '@/lib/api-keys/keys';
 import { hasScope, type ApiScope } from '@/lib/api-keys/scopes';
 import { forbidden, rateLimited, unauthorized } from '@/lib/api/v1/respond';
-import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { checkRateLimit, getClientIp, RATE_LIMITS } from '@/lib/rate-limit';
 
 export interface ApiKeyContext {
   /** Discriminant — lets shared logic tell key auth from cookie auth. */
@@ -81,6 +81,17 @@ export async function requireApiKey(
   request: Request,
   scope?: ApiScope
 ): Promise<ApiKeyContext> {
+  // Per-IP, before any DB work: findActiveKeyByHash is a full SHA-256
+  // hash + indexed Supabase query, and the per-key limit below only
+  // engages once a key is known to exist — a caller hammering this
+  // endpoint with garbage bearer tokens (any string matching the
+  // `wacrm_live_…` prefix) would otherwise get a free, unthrottled DB
+  // lookup per request. See RATE_LIMITS.publicApiPreAuth.
+  const preAuthLimit = checkRateLimit(`apikey-preauth:${getClientIp(request)}`, RATE_LIMITS.publicApiPreAuth);
+  if (!preAuthLimit.success) {
+    throw rateLimited(preAuthLimit);
+  }
+
   const presented = extractKey(request);
   if (!presented || !looksLikeApiKey(presented)) {
     throw unauthorized();

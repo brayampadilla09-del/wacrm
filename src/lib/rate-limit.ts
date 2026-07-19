@@ -22,6 +22,22 @@
 
 import { NextResponse } from 'next/server';
 
+/**
+ * Best-effort client IP. The `x-forwarded-for` header is what every
+ * reverse proxy (Vercel, Hostinger, Cloudflare) sets when forwarding a
+ * request; we take the leftmost entry, which is the original client.
+ * Falls back to a constant when no proxy is in front (e.g. localhost
+ * during development) so rate-limit keys still exist — the limit then
+ * effectively applies "globally," which is fine for dev.
+ */
+export function getClientIp(request: Request): string {
+  const xff = request.headers.get('x-forwarded-for');
+  if (xff) return xff.split(',')[0].trim();
+  const xri = request.headers.get('x-real-ip');
+  if (xri) return xri.trim();
+  return 'unknown';
+}
+
 export interface RateLimitOptions {
   /** Max requests allowed in `windowMs`. */
   limit: number;
@@ -148,6 +164,16 @@ export const RATE_LIMITS = {
    *  instance deploy needs the Redis swap described at the top of
    *  this file (the per-key call sites don't change). */
   publicApi: { limit: 120, windowMs: 60_000 },
+  /** Public REST API, keyed per IP, checked BEFORE the key hash lookup
+   *  even resolves. `publicApi` above only engages once a key is known
+   *  to exist — a caller hammering the endpoint with garbage bearer
+   *  tokens never reaches it, so each junk request still costs a full
+   *  SHA-256 hash + indexed Supabase query with zero throttling. This
+   *  budget is deliberately looser than publicApi (a shared IP — NAT,
+   *  corporate proxy — can host several legitimate integrations) but
+   *  still bounds the cost-amplification/DoS surface of an
+   *  unauthenticated prefix-matching request. */
+  publicApiPreAuth: { limit: 300, windowMs: 60_000 },
   /** AI draft-reply generation, per user. 20/min is generous for an
    *  agent clicking "Draft with AI" while working a thread, and bounds
    *  spend on the account's own LLM key against an accidental
