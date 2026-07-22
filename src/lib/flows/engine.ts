@@ -1302,6 +1302,41 @@ async function handleReplyForActiveRun(
     };
   }
 
+  // Antes de aplicar la política de fallback: si el contacto quedó "colgado"
+  // en un nodo de botones/lista (típicamente anything_else, esperando un tap
+  // que nunca llega) y ahora escribe una palabra de arranque ("hola", "menu",
+  // etc.), lo tratamos como un pedido explícito de reiniciar la conversación
+  // en vez de solo re-mostrar las mismas opciones con un "no entiendo" — sin
+  // esto, cualquier active run viejo bloquea el trigger por keyword de
+  // dispatchInboundToFlows indefinidamente (hasta el timeout de 24h del
+  // cron), porque loadActiveRunForContact siempre gana primero. Solo aplica
+  // en send_buttons/send_list: un collect_input ya acepta cualquier texto
+  // como respuesta válida, así que nunca llega a este fallback por texto no
+  // vacío.
+  if (message.kind === "text" && isButtonNode) {
+    const restartFlow = await findEntryFlow(db, run.account_id, message, false);
+    if (restartFlow?.entry_node_id) {
+      await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
+        action: "restarted_by_keyword",
+        matched_flow_id: restartFlow.id,
+      });
+      await endRun(db, run.id, "completed", "restarted_by_keyword");
+      const restartNodes = await loadAllNodes(db, restartFlow.id);
+      return startNewRun(
+        db,
+        restartFlow,
+        {
+          accountId: run.account_id,
+          userId: run.user_id,
+          contactId: run.contact_id!,
+          conversationId: run.conversation_id!,
+          message,
+        },
+        restartNodes,
+      );
+    }
+  }
+
   // No match → fallback. Apply the policy.
   const policy = resolveFallbackPolicy(
     (await loadFlow(db, run.flow_id))?.fallback_policy,
