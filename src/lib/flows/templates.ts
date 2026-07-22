@@ -386,7 +386,7 @@ const BSIGN_MENU: FlowTemplate = {
       node_key: "catalogo_msg",
       node_type: "send_message",
       config: {
-        text: "Tenemos piezas de decoración, mobiliario y objetos en concreto hechos a mano 🧱. Puedes ver el catálogo completo aquí: https://bsignestudio.vercel.app/shop\n\nSi tienes dudas de una pieza (tamaños, colores, tiempos de entrega), cuéntame y te ayudo.",
+        text: "Tenemos piezas de decoración, mobiliario y objetos en concreto hechos a mano 🧱. Puedes ver el catálogo completo aquí: https://bsignestudio.com/shop\n\nSi tienes dudas de una pieza (tamaños, colores, tiempos de entrega), cuéntame y te ayudo.",
         next_node_key: "anything_else",
       } as SendMessageNodeConfig,
     },
@@ -394,7 +394,7 @@ const BSIGN_MENU: FlowTemplate = {
       node_key: "proyectos_msg",
       node_type: "send_message",
       config: {
-        text: "Aquí puedes ver algunos de nuestros proyectos de diseño ya entregados: https://bsignestudio.vercel.app/proyectos 🖼️",
+        text: "Aquí puedes ver algunos de nuestros proyectos de diseño ya entregados: https://bsignestudio.com/proyectos 🖼️",
         next_node_key: "anything_else",
       } as SendMessageNodeConfig,
     },
@@ -410,7 +410,7 @@ const BSIGN_MENU: FlowTemplate = {
       node_key: "pedido_msg",
       node_type: "send_message",
       config: {
-        text: "Puedes ver el estado y la línea de tiempo completa de todos tus pedidos aquí: https://bsignestudio.vercel.app/profile/orders 📦\n\nInicia sesión con el mismo correo o WhatsApp de la compra y ahí verás el detalle actualizado al instante.",
+        text: "Puedes ver el estado y la línea de tiempo completa de todos tus pedidos aquí: https://bsignestudio.com/profile/orders 📦\n\nInicia sesión con el mismo correo o WhatsApp de la compra y ahí verás el detalle actualizado al instante.",
         next_node_key: "anything_else",
       } as SendMessageNodeConfig,
     },
@@ -418,7 +418,7 @@ const BSIGN_MENU: FlowTemplate = {
       node_key: "agendar_msg",
       node_type: "send_message",
       config: {
-        text: "¡Con gusto! Agenda tu cita de diseño directo aquí — eliges el tipo de espacio y el horario que mejor te quede: https://bsignestudio.vercel.app/agendar 📅\n\nToma un par de minutos y queda sujeta a confirmación de nuestro equipo, te avisamos apenas quede lista.",
+        text: "¡Con gusto! Agenda tu cita de diseño directo aquí — eliges el tipo de espacio y el horario que mejor te quede: https://bsignestudio.com/agendar 📅\n\nToma un par de minutos y queda sujeta a confirmación de nuestro equipo, te avisamos apenas quede lista.",
         next_node_key: "anything_else",
       } as SendMessageNodeConfig,
     },
