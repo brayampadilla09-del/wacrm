@@ -516,6 +516,59 @@ describe("validateFlowForActivation — send_media", () => {
   });
 });
 
+describe("validateFlowForActivation — http_fetch", () => {
+  const baseFlow = { ...validFlow, entry_node_id: "s" };
+  const nodesWith = (fetchConfig: Record<string, unknown>) => [
+    { node_key: "s", node_type: "start", config: { next_node_key: "f" } },
+    { node_key: "f", node_type: "http_fetch", config: fetchConfig },
+    { node_key: "h", node_type: "handoff", config: {} },
+  ];
+
+  it("passes on a fully-populated https:// http_fetch node", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({
+        url: "https://api.example.com/bookings",
+        next_node_key: "h",
+      }),
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it("flags missing url", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({ next_node_key: "h" }),
+    );
+    expect(
+      issues.some((i) => i.node_key === "f" && i.field === "url"),
+    ).toBe(true);
+  });
+
+  it("flags an http:// url (plaintext, headers may carry a secret)", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({
+        url: "http://api.example.com/bookings",
+        next_node_key: "h",
+      }),
+    );
+    expect(
+      issues.some((i) => i.node_key === "f" && i.field === "url"),
+    ).toBe(true);
+  });
+
+  it("flags a non-http(s) url", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({ url: "ftp://example.com/x", next_node_key: "h" }),
+    );
+    expect(
+      issues.some((i) => i.node_key === "f" && i.field === "url"),
+    ).toBe(true);
+  });
+});
+
 describe("reachableFromEntry", () => {
   it("walks the graph from the entry", () => {
     const set = reachableFromEntry("start", validNodes);

@@ -146,10 +146,11 @@ export interface HandoffNodeConfig {
  * Captures the customer's next free-text reply into
  * `flow_runs.vars[var_key]`, then advances.
  *
- * v1.5 ships without runtime validation (`validation` is accepted on
- * the config for forward compat but ignored by the runner); the
- * builder still surfaces the field so users can author flows that
- * v2 will start enforcing.
+ * `validation` is enforced by the runner (`validateCollectInput` in
+ * engine.ts): a reply that fails validation is treated the same as an
+ * unmatched button tap — it falls through to the flow's fallback
+ * policy (reprompt / handoff / end) instead of being captured, so a
+ * customer can't push garbage into `{{vars.x}}` past the check.
  */
 export interface CollectInputNodeConfig {
   /** Prompt text sent to the customer before they reply. */
@@ -161,8 +162,10 @@ export interface CollectInputNodeConfig {
    */
   var_key: string;
   /**
-   * Reserved for v2. Accepted on the config but ignored by the v1.5
-   * runner — captures any non-empty text.
+   * Validation applied before the reply is captured. `"any"` (or
+   * unset) accepts any non-empty text. A malformed `regex` (a builder
+   * typo) fails OPEN — treated as valid — so one bad pattern can't
+   * silently strand every customer hitting this node.
    */
   validation?: "any" | "email" | "phone" | "regex";
   /** Used only when `validation === 'regex'`. */

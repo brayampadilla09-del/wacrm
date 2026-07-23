@@ -176,6 +176,74 @@ export function matchesKeywordTrigger(
   return false;
 }
 
+/**
+ * Minimum age (ms) a `flow_runs` row must have before a same-contact
+ * keyword message is honored as a restart request (see the restart
+ * block in `handleReplyForActiveRun`). Long enough to stop a tight
+ * retry loop, short enough that a genuine "let me start over" seconds
+ * later still works.
+ */
+const RESTART_COOLDOWN_MS = 5_000;
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Lenient free-text phone: allow +, spaces, dashes, parens/digits; the
+// digit-count check below (not this regex alone) rejects short junk.
+const PHONE_RE = /^\+?[\d\s\-().]{7,20}$/;
+
+/**
+ * Validate a `collect_input` reply against its configured
+ * `validation` rule. Assumes the caller already filtered out empty
+ * text. A malformed `regex` (invalid pattern authored in the builder)
+ * fails OPEN — treated as valid — so a typo in an admin's regex can't
+ * silently strand every customer hitting that node; validate.ts (the
+ * flow-save validator) is the right place to catch bad patterns
+ * up front.
+ */
+export function validateCollectInput(
+  validation: CollectInputNodeConfig["validation"],
+  regex: string | undefined,
+  text: string,
+): boolean {
+  switch (validation) {
+    case "email":
+      return EMAIL_RE.test(text);
+    case "phone":
+      return PHONE_RE.test(text) && text.replace(/\D/g, "").length >= 7;
+    case "regex": {
+      if (!regex) return true;
+      try {
+        return new RegExp(regex).test(text);
+      } catch {
+        return true;
+      }
+    }
+    case "any":
+    default:
+      return true;
+  }
+}
+
+/**
+ * User-facing hint shown when a `collect_input` reply fails
+ * validation (or is empty). Replaces the generic "elige una de las
+ * opciones de abajo" clarify text — there are no buttons on a
+ * collect_input node, so that copy would confuse the customer.
+ */
+function collectInputValidationHint(
+  validation: CollectInputNodeConfig["validation"],
+): string {
+  switch (validation) {
+    case "email":
+      return "Ese correo no parece válido 🙏 ¿Puedes escribirlo de nuevo? (ej: nombre@dominio.com)";
+    case "phone":
+      return "Ese número no parece válido 🙏 ¿Puedes escribirlo de nuevo incluyendo el indicativo?";
+    case "regex":
+      return "Ese formato no es el que esperamos 🙏 ¿Puedes intentarlo de nuevo?";
+    default:
+      return "Disculpa, no logré entender tu mensaje 🙏 ¿Puedes intentarlo de nuevo?";
+  }
+}
+
 /** Nodes that advance to a next_node_key without waiting for input. */
 export function isAutoAdvancing(node_type: string): boolean {
   return (
@@ -897,6 +965,13 @@ async function advanceFromNodeKey(
     if (node.node_type === "http_fetch") {
       const cfg = node.config as unknown as HttpFetchNodeConfig;
       try {
+        // https-only, re-enforced here (not just at flow-save time in
+        // validate.ts) in case an older flow was authored before this
+        // rule existed — headers on this node often carry a bearer
+        // secret, which must never travel over plaintext http.
+        if (!/^https:\/\//i.test(cfg.url)) {
+          throw new Error("destination must use https");
+        }
         if (!(await isDeliverableUrl(cfg.url))) {
           throw new Error("destination not allowed");
         }
@@ -1237,7 +1312,20 @@ async function handleReplyForActiveRun(
   ) {
     const cfg = currentNode.config as unknown as CollectInputNodeConfig;
     const captured = message.text.trim();
-    if (captured.length > 0 && cfg.var_key) {
+    const isValid =
+      captured.length > 0 &&
+      validateCollectInput(cfg.validation, cfg.regex, captured);
+    if (!isValid && captured.length > 0) {
+      // Don't persist rejected text — no PAN/raw content in the log,
+      // same reasoning as reply_received above; length is enough to
+      // debug "why did this keep bouncing".
+      await logEvent(db, run.id, "error", currentNode.node_key, {
+        reason: "collect_input_validation_failed",
+        validation: cfg.validation ?? "any",
+        text_length: captured.length,
+      });
+    }
+    if (isValid && cfg.var_key) {
       // Persist captured value + reset reprompt count atomically.
       const newVars = { ...run.vars, [cfg.var_key]: captured };
       const { error: capErr } = await db
@@ -1313,7 +1401,16 @@ async function handleReplyForActiveRun(
   // en send_buttons/send_list: un collect_input ya acepta cualquier texto
   // como respuesta válida, así que nunca llega a este fallback por texto no
   // vacío.
-  if (message.kind === "text" && isButtonNode) {
+  //
+  // Cooldown: cada restart termina el run activo y llama startNewRun, que
+  // corre el advance loop entero desde cero (incluyendo cualquier
+  // http_fetch/send del entry) — sin un piso mínimo, un contacto (o script)
+  // que dispare la keyword de restart en bucle rápido reejecutaría esa
+  // cadena tan rápido como WhatsApp entregue mensajes. RESTART_COOLDOWN_MS
+  // se mide contra `started_at` del run activo — que un restart exitoso
+  // siempre refresca — así que no hace falta una columna ni consulta nueva.
+  const runAgeMs = Date.now() - new Date(run.started_at).getTime();
+  if (message.kind === "text" && isButtonNode && runAgeMs >= RESTART_COOLDOWN_MS) {
     const restartFlow = await findEntryFlow(db, run.account_id, message, false);
     if (restartFlow?.entry_node_id) {
       await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
@@ -1369,17 +1466,26 @@ async function handleReplyForActiveRun(
       if (data) contact = { phone: data.phone, name: data.name, email: data.email, full_name: data.full_name };
     }
 
-    // Antes de reenviar las opciones, aclaramos que no entendimos el mensaje
-    // libre que mandaron — sin esto, quien le escribe al bot como si fuera
-    // una persona solo ve las mismas opciones de nuevo, sin explicación, y
-    // asume que el bot lo ignoró o está roto.
+    // Antes de reenviar las opciones/el prompt, aclaramos que no aceptamos
+    // el mensaje libre que mandaron — sin esto, quien le escribe al bot
+    // como si fuera una persona solo ve las mismas opciones de nuevo, sin
+    // explicación, y asume que el bot lo ignoró o está roto. Un
+    // collect_input no tiene "opciones de abajo", así que ese nodo usa un
+    // hint específico del tipo de validación en vez del texto genérico.
+    const clarifyText =
+      currentNode.node_type === "collect_input"
+        ? collectInputValidationHint(
+            (currentNode.config as unknown as CollectInputNodeConfig)
+              .validation,
+          )
+        : "Disculpa, no logré entender tu mensaje 🙏 Por favor elige una de las opciones de abajo.";
     try {
       await engineSendText({
         accountId: run.account_id,
         userId: run.user_id,
         conversationId: run.conversation_id!,
         contactId: run.contact_id!,
-        text: "Disculpa, no logré entender tu mensaje 🙏 Por favor elige una de las opciones de abajo.",
+        text: clarifyText,
       });
     } catch (err) {
       await logEvent(db, run.id, "error", currentNode.node_key, {

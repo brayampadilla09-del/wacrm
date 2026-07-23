@@ -63,6 +63,12 @@ export interface DispatchInput {
  * Must never throw — callers use fire-and-forget from the webhook.
  * All errors are caught and logged; per-automation failures are
  * recorded into automation_logs with status='failed'.
+ *
+ * This engine has no notion of Flows or AI auto-reply — the caller
+ * (the webhook) decides WHICH triggers to dispatch here based on
+ * whether a Flow already consumed the inbound. See the "CANONICAL
+ * PRECEDENCE ORDER" block in src/app/api/whatsapp/webhook/route.ts
+ * for the full three-way ordering (Flows > Automations > AI).
  */
 export async function runAutomationsForTrigger(input: DispatchInput): Promise<void> {
   try {

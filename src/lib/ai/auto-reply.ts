@@ -28,6 +28,11 @@ interface DispatchArgs {
  * runner's contract: it owns its try/catch and NEVER throws — a failing
  * or slow LLM call must not affect the webhook's 200 to Meta.
  *
+ * This is the lowest-precedence responder (Flows > Automations >
+ * AI) — see the "CANONICAL PRECEDENCE ORDER" block in
+ * src/app/api/whatsapp/webhook/route.ts for the full three-way
+ * ordering and why it's split across files instead of one switch.
+ *
  * Eligibility gates (any → silent no-op):
  *   - AI off / auto-reply disabled for the account
  *   - a human agent is assigned (they own the thread)

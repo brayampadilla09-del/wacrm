@@ -6,6 +6,7 @@ import {
   isSuspending,
   isTerminal,
   evaluateConditionPredicate,
+  validateCollectInput,
 } from "./engine";
 
 describe("matchReplyId", () => {
@@ -295,5 +296,36 @@ describe("evaluateConditionPredicate", () => {
         configValue: "anything",
       }),
     ).toBe(false);
+  });
+});
+
+describe("validateCollectInput", () => {
+  it("'any' (or unset) accepts anything", () => {
+    expect(validateCollectInput("any", undefined, "whatever")).toBe(true);
+    expect(validateCollectInput(undefined, undefined, "whatever")).toBe(true);
+  });
+
+  it("'email' requires an @ and a dot in the domain part", () => {
+    expect(validateCollectInput("email", undefined, "a@b.com")).toBe(true);
+    expect(validateCollectInput("email", undefined, "not-an-email")).toBe(false);
+    expect(validateCollectInput("email", undefined, "a@b")).toBe(false);
+    expect(validateCollectInput("email", undefined, "a @b.com")).toBe(false);
+  });
+
+  it("'phone' requires enough digits, allows +/spaces/dashes/parens", () => {
+    expect(validateCollectInput("phone", undefined, "+57 300 123 4567")).toBe(true);
+    expect(validateCollectInput("phone", undefined, "(300) 123-4567")).toBe(true);
+    expect(validateCollectInput("phone", undefined, "12345")).toBe(false);
+    expect(validateCollectInput("phone", undefined, "hello")).toBe(false);
+  });
+
+  it("'regex' matches the configured pattern", () => {
+    expect(validateCollectInput("regex", "^\\d{4}$", "1234")).toBe(true);
+    expect(validateCollectInput("regex", "^\\d{4}$", "12345")).toBe(false);
+  });
+
+  it("'regex' with a missing or malformed pattern fails open (accepts)", () => {
+    expect(validateCollectInput("regex", undefined, "anything")).toBe(true);
+    expect(validateCollectInput("regex", "([unclosed", "anything")).toBe(true);
   });
 });

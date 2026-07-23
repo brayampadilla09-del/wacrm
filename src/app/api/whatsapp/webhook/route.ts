@@ -708,6 +708,28 @@ async function processMessage(
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
 
   // ============================================================
+  // CANONICAL PRECEDENCE ORDER — this is the one place all three
+  // responders are wired together; read this block before touching
+  // any of the three files it references.
+  //
+  //   1. Flows            (src/lib/flows/engine.ts)         — wins
+  //   2. Automations       (src/lib/automations/engine.ts)  — content-
+  //      level triggers (new_message_received / keyword_match) only
+  //      fire when Flows didn't consume the message (`flowConsumed`
+  //      below). Relationship triggers (new_contact_created /
+  //      first_inbound_message) always fire regardless — see below.
+  //   3. AI auto-reply     (src/lib/ai/auto-reply.ts)       — loses to
+  //      both: it no-ops when `flowConsumed`, and separately stands
+  //      down (inside dispatchInboundToAiReply) when the account has
+  //      any active new_message_received/keyword_match automation, so
+  //      it never double-texts alongside one.
+  //
+  // Each file enforces its own half of this ordering independently
+  // (flows know nothing of automations/AI; automations know nothing
+  // of flows/AI; AI checks both). If you change who wins, update the
+  // check in every file below, not just one — there's no single
+  // switch statement to change.
+  //
   // Flow runner dispatch.
   //
   // If the runner consumes the message (it either advanced an active

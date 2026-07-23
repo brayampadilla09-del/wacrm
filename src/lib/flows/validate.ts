@@ -759,13 +759,18 @@ function validateNode(
           field: "url",
           message: "Http-fetch needs a URL.",
         });
-      } else if (!/^https?:\/\//i.test(cfg.url)) {
+      } else if (!/^https:\/\//i.test(cfg.url)) {
+        // https-only — matches the same rule webhooks/endpoints.ts already
+        // enforces for outbound webhook URLs. An http_fetch node's headers
+        // frequently carry a bearer secret (e.g. WACRM_BOT_SECRET for the
+        // pagina-estudio booking endpoints); allowing http:// would let
+        // that secret travel in plaintext over the wire.
         issues.push({
           severity: "error",
           scope: "node",
           node_key: node.node_key,
           field: "url",
-          message: "Http-fetch URL must be http:// or https://.",
+          message: "Http-fetch URL must use https://.",
         });
       }
       if (!cfg.next_node_key) {
