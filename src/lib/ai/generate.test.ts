@@ -192,3 +192,53 @@ describe('generateReply — Anthropic', () => {
     expect(body.messages).toHaveLength(1)
   })
 })
+
+describe('generateReply — OpenRouter', () => {
+  it('calls the OpenRouter chat completions endpoint with any model id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        choices: [{ message: { content: 'Hi from OpenRouter!' } }],
+        usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await generateReply({
+      config: config({
+        provider: 'openrouter',
+        model: 'meta-llama/llama-3.1-8b-instruct',
+        apiKey: 'sk-or-test',
+      }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+
+    expect(res).toEqual({
+      text: 'Hi from OpenRouter!',
+      handoff: false,
+      usage: { promptTokens: 12, completionTokens: 4, totalTokens: 16 },
+    })
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toContain('openrouter.ai')
+    expect(opts.headers.Authorization).toBe('Bearer sk-or-test')
+    const body = JSON.parse(opts.body)
+    expect(body.model).toBe('meta-llama/llama-3.1-8b-instruct')
+  })
+
+  it('maps a 401 to an invalid_key AiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        errResponse(401, { error: { message: 'No auth credentials found' } }),
+      ),
+    )
+
+    await expect(
+      generateReply({
+        config: config({ provider: 'openrouter' }),
+        systemPrompt: 'sys',
+        messages: [{ role: 'user', content: 'Hi' }],
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_key', status: 401 })
+  })
+})

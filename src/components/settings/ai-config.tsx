@@ -41,11 +41,13 @@ const HANDOFF_QUEUE = '__queue__';
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic (Claude)',
+  openrouter: 'OpenRouter (any model)',
 };
 
 const KEY_PLACEHOLDER: Record<AiProvider, string> = {
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
+  openrouter: 'sk-or-...',
 };
 
 export function AiConfig() {
@@ -131,6 +133,7 @@ export function AiConfig() {
     const isDefaultModel =
       model === AI_PROVIDER_DEFAULT_MODEL.openai ||
       model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
+      model === AI_PROVIDER_DEFAULT_MODEL.openrouter ||
       model.trim() === '';
     if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
@@ -281,6 +284,9 @@ export function AiConfig() {
                     <SelectItem value="anthropic">
                       {PROVIDER_LABEL.anthropic}
                     </SelectItem>
+                    <SelectItem value="openrouter">
+                      {PROVIDER_LABEL.openrouter}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -294,6 +300,19 @@ export function AiConfig() {
                   placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
                   disabled={disabled}
                 />
+                {provider === 'openrouter' && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('openrouterModelHint')}{' '}
+                    <a
+                      href="https://openrouter.ai/models"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline underline-offset-2 hover:text-foreground"
+                    >
+                      openrouter.ai/models
+                    </a>
+                  </p>
+                )}
               </div>
             </div>
 
