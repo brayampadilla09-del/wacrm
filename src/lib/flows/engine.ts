@@ -40,6 +40,7 @@ import {
   engineSendText,
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
+import { classifyFlowIntent, classifyMenuOptionIntent } from "./ai-router";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { isDeliverableUrl } from "@/lib/webhooks/ssrf";
@@ -152,6 +153,42 @@ export function matchButtonTextReply(
     return title === needle || title.includes(needle) || needle.includes(title);
   });
   return hits.length === 1 ? hits[0].reply_id : null;
+}
+
+/**
+ * List a send_buttons/send_list node's options in the shape the AI
+ * menu-option classifier needs. Dynamic send_list rows aren't known
+ * statically (they come from a prior http_fetch) — same limitation
+ * `matchButtonTextReply` has — so those return an empty list, which
+ * short-circuits `classifyMenuOptionIntent` to a no-op.
+ */
+function collectNodeOptions(node: {
+  node_type: string;
+  config: Record<string, unknown>;
+}): { reply_id: string; title: string; description?: string }[] {
+  if (node.node_type === "send_buttons") {
+    const cfg = node.config as unknown as SendButtonsNodeConfig;
+    return (cfg.buttons ?? []).map((b) => ({
+      reply_id: b.reply_id,
+      title: b.title,
+    }));
+  }
+  if (node.node_type === "send_list") {
+    const cfg = node.config as unknown as SendListNodeConfig;
+    if (cfg.dynamic) return [];
+    const options: { reply_id: string; title: string; description?: string }[] = [];
+    for (const section of cfg.sections ?? []) {
+      for (const row of section.rows ?? []) {
+        options.push({
+          reply_id: row.reply_id,
+          title: row.title,
+          description: row.description,
+        });
+      }
+    }
+    return options;
+  }
+  return [];
 }
 
 /**
@@ -466,6 +503,7 @@ async function findEntryFlow(
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
+  const keywordCandidates: FlowRow[] = [];
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       if (matchesKeywordTrigger(
@@ -474,11 +512,39 @@ async function findEntryFlow(
       )) {
         return flow;
       }
+      keywordCandidates.push(flow);
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
       return flow;
     }
     // 'manual' triggers do not auto-start from inbound messages.
   }
+
+  // No literal keyword hit. Ask the account's configured AI model (if
+  // any) whether the message's intent matches one of the keyword-trigger
+  // flows anyway — e.g. "necesito una cita para el jueves" against a flow
+  // whose keywords are just ["agendar", "cita"], or a plain "buenas
+  // tardes" against a welcome flow keyed on "hola"/"hi". See ai-router.ts
+  // for why this doesn't weaken the "flows win" precedence — it only
+  // widens the match; classifyFlowIntent no-ops (returns null) when the
+  // account has no AI configured or its master switch is off, so an
+  // account without AI set up behaves exactly as before.
+  if (keywordCandidates.length > 0) {
+    const matchedId = await classifyFlowIntent(
+      db,
+      accountId,
+      message.text,
+      keywordCandidates.map((f) => ({
+        id: f.id,
+        name: f.name,
+        description: f.description,
+      })),
+    );
+    if (matchedId) {
+      const matchedFlow = keywordCandidates.find((f) => f.id === matchedId);
+      if (matchedFlow) return matchedFlow;
+    }
+  }
+
   return null;
 }
 
@@ -1262,12 +1328,33 @@ async function handleReplyForActiveRun(
   const isButtonNode =
     currentNode.node_type === "send_buttons" ||
     currentNode.node_type === "send_list";
-  const resolvedReplyId: string | null =
+  let resolvedReplyId: string | null =
     message.kind === "interactive_reply" && isButtonNode
       ? message.reply_id
       : message.kind === "text" && isButtonNode
         ? matchButtonTextReply(currentNode, message.text)
         : null;
+
+  // Free text that didn't tap a button and didn't literally match an
+  // option title — try the account's configured AI model before falling
+  // through to the restart-by-keyword check / fallback policy below.
+  // Customers paraphrase ("quiero agendar una cita" for a button titled
+  // "Agendar cita de diseño") in ways the literal contains-match above
+  // can't catch; without this, that reply would fall through to
+  // restart-by-keyword, which — when the flow's own entry keywords
+  // overlap with its menu option words, as "agendar" typically does —
+  // just restarts the same flow from its welcome message instead of
+  // advancing. See ai-router.ts; this no-ops (stays null) when the
+  // account has no AI configured/active.
+  if (!resolvedReplyId && message.kind === "text" && isButtonNode) {
+    resolvedReplyId = await classifyMenuOptionIntent(
+      db,
+      run.account_id,
+      message.text,
+      collectNodeOptions(currentNode),
+    );
+  }
+
   if (resolvedReplyId) {
     matched = matchReplyId(currentNode, resolvedReplyId);
     if (matched) {

@@ -193,6 +193,12 @@ export const RATE_LIMITS = {
    *  capping a stampede; excess inbounds simply don't get an auto-reply
    *  (they still land in the inbox for a human). */
   aiAutoReplyAccount: { limit: 30, windowMs: 60_000 },
+  /** AI flow-intent routing, per account. One extra LLM call per inbound
+   *  that doesn't hit a literal keyword trigger (see
+   *  `src/lib/flows/ai-router.ts`) — same budget reasoning as
+   *  `aiAutoReplyAccount`, kept as its own bucket so a routing burst can't
+   *  eat into the auto-reply budget or vice versa. */
+  aiFlowRouterAccount: { limit: 30, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't
