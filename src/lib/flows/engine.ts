@@ -40,7 +40,11 @@ import {
   engineSendText,
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
-import { classifyFlowIntent, classifyMenuOptionIntent } from "./ai-router";
+import {
+  classifyFlowIntent,
+  classifyMenuOptionIntent,
+  classifyCancelIntent,
+} from "./ai-router";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { isDeliverableUrl } from "@/lib/webhooks/ssrf";
@@ -114,19 +118,21 @@ export function matchReplyId(
  * than one option matches, so an ambiguous reply still falls through
  * to the fallback policy rather than picking the wrong branch.
  */
+function normalizeText(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // acentos
+    .replace(/[^\p{L}\p{N}\s]/gu, "") // puntuación ("no gracias" debe calzar con "No, gracias")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function matchButtonTextReply(
   node: { node_type: string; config: Record<string, unknown> },
   text: string,
 ): string | null {
-  const normalize = (s: string) =>
-    s
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "") // acentos
-      .replace(/[^\p{L}\p{N}\s]/gu, "") // puntuación ("no gracias" debe calzar con "No, gracias")
-      .replace(/\s+/g, " ")
-      .trim();
-  const needle = normalize(text);
+  const needle = normalizeText(text);
   if (!needle) return null;
 
   let options: { reply_id: string; title: string }[] = [];
@@ -149,11 +155,52 @@ export function matchButtonTextReply(
   }
 
   const hits = options.filter((o) => {
-    const title = normalize(o.title);
+    const title = normalizeText(o.title);
     return title === needle || title.includes(needle) || needle.includes(title);
   });
   return hits.length === 1 ? hits[0].reply_id : null;
 }
+
+/**
+ * Common Spanish/English phrasings for "stop doing this" — checked
+ * before any node-type-specific reply matching in
+ * `handleReplyForActiveRun` so an explicit cancel request never gets
+ * swallowed as literal `collect_input` data (e.g. captured as the
+ * customer's "name") or lost as an unmatched button tap. Contains-match
+ * on normalized text, same normalization as `matchButtonTextReply` so
+ * "Ya no quiero, cancélalo" matches via both "ya no quiero" and
+ * "cancelalo".
+ */
+const CANCEL_KEYWORDS = [
+  "cancelar",
+  "cancela",
+  "cancelalo",
+  "ya no quiero",
+  "ya no",
+  "olvidalo",
+  "no quiero continuar",
+  "no quiero seguir",
+  "detener",
+  "detenlo",
+  "para ya",
+  "dejalo asi",
+  "mejor no",
+  "stop",
+  "cancel",
+  "nevermind",
+  "never mind",
+];
+
+export function matchesCancelIntentKeyword(text: string): boolean {
+  const needle = normalizeText(text);
+  if (!needle) return false;
+  return CANCEL_KEYWORDS.some((k) => needle.includes(k));
+}
+
+/** Stable synthetic reply_id for the "customer wants to cancel" option
+ *  appended to the real menu options sent to `classifyMenuOptionIntent`
+ *  — never a real button/row id, so it can't collide with one. */
+const CANCEL_REPLY_ID = "__flow_cancel__";
 
 /**
  * List a send_buttons/send_list node's options in the shape the AI
@@ -799,6 +846,40 @@ function resolveVarArray(
     : [];
 }
 
+/**
+ * Ends the active run when the customer signals they want to stop —
+ * either via `matchesCancelIntentKeyword` or the AI cancel classifier.
+ * Sends a short acknowledgement and marks the run `completed` (not
+ * `handed_off` — the customer asked to stop, not to talk to a human;
+ * see `executeHandoff` for that path), so "finalizar el chat" means the
+ * flow session actually ends instead of sitting active waiting for a
+ * reply that will never come to satisfy the old node.
+ */
+async function cancelActiveRun(
+  db: AdminClient,
+  run: FlowRunRow,
+): Promise<DispatchInboundResult> {
+  try {
+    await engineSendText({
+      accountId: run.account_id,
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      text: "Listo, cancelo esto por ahora 👍 Si más adelante quieres retomarlo, solo escríbeme.",
+    });
+  } catch (err) {
+    await logEvent(db, run.id, "error", run.current_node_key, {
+      reason: "cancel_ack_send_failed",
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+  await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
+    action: "cancelled_by_customer",
+  });
+  await endRun(db, run.id, "completed", "cancelled_by_customer");
+  return { consumed: true, flow_run_id: run.id, outcome: "completed" };
+}
+
 async function endRun(
   db: AdminClient,
   runId: string,
@@ -1315,6 +1396,31 @@ async function handleReplyForActiveRun(
     return { consumed: true, flow_run_id: run.id, outcome: "no_match" };
   }
 
+  // Cancel request — checked BEFORE any node-type-specific matching so it
+  // takes priority everywhere, including a `collect_input` node (which
+  // otherwise accepts any non-empty text as the answer it asked for — a
+  // "ya no quiero, cancélalo" would silently get captured as the
+  // customer's name/email without this). The keyword check is free and
+  // catches explicit phrasings instantly; the AI check only runs for
+  // collect_input (where "accept anything" makes a paraphrase the
+  // riskiest to miss) and only when AI is configured/active for the
+  // account — see ai-router.ts's classifyCancelIntent.
+  if (message.kind === "text") {
+    if (matchesCancelIntentKeyword(message.text)) {
+      return cancelActiveRun(db, run);
+    }
+    if (currentNode.node_type === "collect_input") {
+      const wantsCancel = await classifyCancelIntent(
+        db,
+        run.account_id,
+        message.text,
+      );
+      if (wantsCancel) {
+        return cancelActiveRun(db, run);
+      }
+    }
+  }
+
   // Three ways a reply can advance:
   //   1. Interactive button/list tap on a send_buttons/send_list node.
   //   2. Typed text that matches an option's title on that same kind of
@@ -1347,12 +1453,28 @@ async function handleReplyForActiveRun(
   // advancing. See ai-router.ts; this no-ops (stays null) when the
   // account has no AI configured/active.
   if (!resolvedReplyId && message.kind === "text" && isButtonNode) {
+    // The synthetic "Cancelar" option folds cancel-intent detection into
+    // this same AI call (instead of a second one) — if the free text
+    // doesn't fit any real option but reads as "stop/cancel this", the
+    // model picks it over guessing a real button.
     resolvedReplyId = await classifyMenuOptionIntent(
       db,
       run.account_id,
       message.text,
-      collectNodeOptions(currentNode),
+      [
+        ...collectNodeOptions(currentNode),
+        {
+          reply_id: CANCEL_REPLY_ID,
+          title: "Cancelar",
+          description:
+            "El cliente ya no quiere continuar con esto y prefiere terminar la conversación (dice algo como 'ya no quiero', 'cancela', 'déjalo así').",
+        },
+      ],
     );
+  }
+
+  if (resolvedReplyId === CANCEL_REPLY_ID) {
+    return cancelActiveRun(db, run);
   }
 
   if (resolvedReplyId) {

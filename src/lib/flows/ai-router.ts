@@ -119,6 +119,40 @@ export async function classifyFlowIntent(
  * welcome message instead of advancing — which reads to the customer as
  * the bot ignoring what they just said.
  */
+/**
+ * AI-assisted cancel-intent detection for a `collect_input` node.
+ *
+ * `handleReplyForActiveRun` in engine.ts calls this only for
+ * `collect_input` nodes, and only after the free (zero-cost)
+ * `matchesCancelIntentKeyword` check already missed. collect_input
+ * nodes accept any non-empty text as the answer they asked for by
+ * design, so a paraphrased cancel request ("mejor dejemos esto para
+ * otro día", "no, ya no") would otherwise get silently captured as the
+ * customer's name/email/whatever was being asked — this is the one
+ * check specific to that node type; button/list nodes fold the same
+ * detection into `classifyMenuOptionIntent` via its synthetic "Cancelar"
+ * option instead of a second AI call.
+ */
+export async function classifyCancelIntent(
+  db: SupabaseClient,
+  accountId: string,
+  text: string,
+): Promise<boolean> {
+  const idx = await classifyAgainstOptions({
+    db,
+    accountId,
+    text,
+    systemPrompt:
+      'Eres un clasificador de intención para un bot de WhatsApp. El bot le pidió un dato al cliente (nombre, correo, una fecha, etc.) dentro de un proceso en curso, como agendar una cita. ' +
+      'Se te da el mensaje que el cliente escribió en respuesta. Responde con 1 si el mensaje indica que el cliente quiere cancelar, detener o abandonar el proceso en vez de dar el dato (por ejemplo dice que ya no quiere seguir, que lo deje así, que cancele), o con 0 si el mensaje parece ser simplemente el dato que se le pidió, o cualquier otra cosa que no sea un pedido de cancelar. ' +
+      'No expliques tu respuesta, no agregues texto adicional — responde solo con el número.',
+    optionLines: [
+      '1. El cliente quiere cancelar, detener o abandonar el proceso actual.',
+    ],
+  })
+  return idx === 1
+}
+
 export async function classifyMenuOptionIntent(
   db: SupabaseClient,
   accountId: string,

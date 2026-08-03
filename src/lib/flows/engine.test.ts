@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   matchReplyId,
   matchesKeywordTrigger,
+  matchesCancelIntentKeyword,
   isAutoAdvancing,
   isSuspending,
   isTerminal,
@@ -135,6 +136,35 @@ describe("matchesKeywordTrigger", () => {
     expect(matchesKeywordTrigger("I have an issue", cfg)).toBe(true);
     expect(matchesKeywordTrigger("I need Help!", cfg)).toBe(true);
     expect(matchesKeywordTrigger("nothing to see here", cfg)).toBe(false);
+  });
+});
+
+describe("matchesCancelIntentKeyword", () => {
+  it("returns false for empty text", () => {
+    expect(matchesCancelIntentKeyword("")).toBe(false);
+    expect(matchesCancelIntentKeyword("   ")).toBe(false);
+  });
+
+  it("matches explicit cancel phrasings, accent/case-insensitive", () => {
+    expect(matchesCancelIntentKeyword("cancelar")).toBe(true);
+    expect(matchesCancelIntentKeyword("CANCELAR")).toBe(true);
+    expect(matchesCancelIntentKeyword("mejor cancélalo")).toBe(true);
+    expect(matchesCancelIntentKeyword("ya no quiero hacerlo")).toBe(true);
+    expect(matchesCancelIntentKeyword("olvídalo")).toBe(true);
+    expect(matchesCancelIntentKeyword("stop")).toBe(true);
+  });
+
+  it("matches the phrase anywhere inside a longer message", () => {
+    expect(
+      matchesCancelIntentKeyword("espera, ya no quiero, cancélalo por favor"),
+    ).toBe(true);
+  });
+
+  it("does not match plain answers or unrelated text", () => {
+    expect(matchesCancelIntentKeyword("Juan Pérez")).toBe(false);
+    expect(matchesCancelIntentKeyword("juan@example.com")).toBe(false);
+    expect(matchesCancelIntentKeyword("residencial")).toBe(false);
+    expect(matchesCancelIntentKeyword("el jueves a las 3pm")).toBe(false);
   });
 
   it("skips empty strings in the keywords array", () => {
