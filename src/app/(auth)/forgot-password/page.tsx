@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,9 +17,17 @@ import {
 } from "@/components/ui/card";
 import { CheckCircle, ArrowLeft } from "lucide-react";
 
-export default function ForgotPasswordPage() {
+function ForgotPasswordForm() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // A link that expired, was already used, or lost its verifier lands
+  // back here via /auth/callback carrying the reason. Seeding the error
+  // state from the query string surfaces it on first paint, so
+  // "nothing happened" becomes "request a new one" — and the first
+  // submit clears it like any other error.
+  const [error, setError] = useState<string | null>(() =>
+    searchParams.get("error"),
+  );
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const supabase = createClient();
@@ -45,18 +54,18 @@ export default function ForgotPasswordPage() {
   if (success) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
-      {/* Signing in is where the brand should be loudest: the site puts
-          its auth screens on a full navy ground with the mark reversed
-          out in white (see AuthShell in pagina-estudio). The logo file
-          is a dark stroke on transparent, hence brightness-0 + invert. */}
-      <Image
-        src="/bsign-logo.png"
-        alt="BSign Estudio"
-        width={696}
-        height={480}
-        priority
-        className="h-16 w-auto brightness-0 invert"
-      />
+        {/* Signing in is where the brand should be loudest: the site puts
+            its auth screens on a full navy ground with the mark reversed
+            out in white (see AuthShell in pagina-estudio). The logo file
+            is a dark stroke on transparent, hence brightness-0 + invert. */}
+        <Image
+          src="/bsign-logo.png"
+          alt="BSign Estudio"
+          width={696}
+          height={480}
+          priority
+          className="h-16 w-auto brightness-0 invert"
+        />
         <Card className="w-full max-w-md border-border bg-card">
           <CardHeader className="justify-items-center text-center">
             <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-pill bg-primary/10">
@@ -149,5 +158,13 @@ export default function ForgotPasswordPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function ForgotPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ForgotPasswordForm />
+    </Suspense>
   );
 }
