@@ -14,6 +14,15 @@
 export type ColorUtility = "bg" | "stroke" | "fill" | "text"
 
 export const chartColors = {
+  // Not from Tremor: the house accent, mapped to the theme's --primary
+  // rather than a fixed Tailwind hue, so a chart asking for "brand"
+  // follows the accent picker (BSign navy on light, indigo on dark).
+  brand: {
+    bg: "bg-primary",
+    stroke: "stroke-primary",
+    fill: "fill-primary",
+    text: "text-primary",
+  },
   blue: {
     bg: "bg-blue-500",
     stroke: "stroke-blue-500",

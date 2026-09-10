@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -14,7 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
+import { CheckCircle, UsersRound } from "lucide-react";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -91,10 +92,22 @@ function SignupPageInner() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
+      {/* Signing in is where the brand should be loudest: the site puts
+          its auth screens on a full navy ground with the mark reversed
+          out in white (see AuthShell in pagina-estudio). The logo file
+          is a dark stroke on transparent, hence brightness-0 + invert. */}
+      <Image
+        src="/bsign-logo.png"
+        alt="BSign Estudio"
+        width={696}
+        height={480}
+        priority
+        className="h-16 w-auto brightness-0 invert"
+      />
         <Card className="w-full max-w-md border-border bg-card">
-          <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+          <CardHeader className="justify-items-center text-center">
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-pill bg-primary/10">
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
             <CardTitle className="text-xl text-foreground">
@@ -128,16 +141,26 @@ function SignupPageInner() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
+      {/* Signing in is where the brand should be loudest: the site puts
+          its auth screens on a full navy ground with the mark reversed
+          out in white (see AuthShell in pagina-estudio). The logo file
+          is a dark stroke on transparent, hence brightness-0 + invert. */}
+      <Image
+        src="/bsign-logo.png"
+        alt="BSign Estudio"
+        width={696}
+        height={480}
+        priority
+        className="h-16 w-auto brightness-0 invert"
+      />
       <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            {inviteToken ? (
+        <CardHeader className="justify-items-center text-center">
+          {inviteToken && (
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-pill bg-primary/10">
               <UsersRound className="h-6 w-6 text-primary" />
-            ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
-            )}
-          </div>
+            </div>
+          )}
           <CardTitle className="text-xl text-foreground">
             {inviteToken ? "Create account & join" : "Create account"}
           </CardTitle>
@@ -166,7 +189,7 @@ function SignupPageInner() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="border-border bg-card text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/15"
               />
             </div>
 
@@ -181,7 +204,7 @@ function SignupPageInner() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="border-border bg-card text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/15"
               />
             </div>
 
@@ -196,7 +219,7 @@ function SignupPageInner() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="border-border bg-card text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/15"
               />
             </div>
 
@@ -211,7 +234,7 @@ function SignupPageInner() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="border-border bg-card text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/15"
               />
             </div>
 

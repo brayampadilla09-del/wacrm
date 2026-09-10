@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages } from 'next-intl/server';
-import { Inter } from "next/font/google";
+import { Poppins } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { ThemeProvider } from "@/hooks/use-theme";
@@ -15,9 +15,15 @@ import {
   THEME_IDS,
 } from "@/lib/themes";
 
-const inter = Inter({
+// BSign's typeface (see pagina-estudio, --font-poppins). Poppins has no
+// variable-weight file on Google Fonts, so the weights have to be listed
+// explicitly — these are the four the UI actually uses: 400 body, 500
+// labels and nav, 600 headings and eyebrows, 700 the rare emphatic number.
+const poppins = Poppins({
   variable: "--font-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -41,8 +47,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#020617",
-  colorScheme: "dark light",
+  // The BSign light ground (cream over white) — this is what paints
+  // the browser chrome on mobile, so it has to match --background.
+  themeColor: "#fbf9f4",
+  colorScheme: "light dark",
 };
 
 // Inline boot script — runs before React hydrates so the user's
@@ -90,7 +98,7 @@ export default async function RootLayout({
       lang={locale}
       data-theme={DEFAULT_THEME}
       data-mode={DEFAULT_MODE}
-      className={`${inter.variable} h-full antialiased`}
+      className={`${poppins.variable} h-full antialiased`}
       // The `theme-boot` script below rewrites `data-theme` and
       // `data-mode` on <html> from localStorage before React hydrates,
       // so for any non-default choice the client DOM intentionally

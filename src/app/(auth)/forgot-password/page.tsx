@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -13,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, CheckCircle, ArrowLeft } from "lucide-react";
+import { CheckCircle, ArrowLeft } from "lucide-react";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -43,10 +44,22 @@ export default function ForgotPasswordPage() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
+      {/* Signing in is where the brand should be loudest: the site puts
+          its auth screens on a full navy ground with the mark reversed
+          out in white (see AuthShell in pagina-estudio). The logo file
+          is a dark stroke on transparent, hence brightness-0 + invert. */}
+      <Image
+        src="/bsign-logo.png"
+        alt="BSign Estudio"
+        width={696}
+        height={480}
+        priority
+        className="h-16 w-auto brightness-0 invert"
+      />
         <Card className="w-full max-w-md border-border bg-card">
-          <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+          <CardHeader className="justify-items-center text-center">
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-pill bg-primary/10">
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
             <CardTitle className="text-xl text-foreground">
@@ -74,12 +87,21 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
+      {/* Signing in is where the brand should be loudest: the site puts
+          its auth screens on a full navy ground with the mark reversed
+          out in white (see AuthShell in pagina-estudio). The logo file
+          is a dark stroke on transparent, hence brightness-0 + invert. */}
+      <Image
+        src="/bsign-logo.png"
+        alt="BSign Estudio"
+        width={696}
+        height={480}
+        priority
+        className="h-16 w-auto brightness-0 invert"
+      />
       <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <MessageSquare className="h-6 w-6 text-primary" />
-          </div>
+        <CardHeader className="justify-items-center text-center">
           <CardTitle className="text-xl text-foreground">Reset password</CardTitle>
           <CardDescription className="text-muted-foreground">
             Enter your email and we&apos;ll send you a reset link
@@ -104,7 +126,7 @@ export default function ForgotPasswordPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="border-border bg-card text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/15"
               />
             </div>
 

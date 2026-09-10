@@ -14,6 +14,7 @@
  */
 
 export const THEME_IDS = [
+  "bsign",
   "violet",
   "emerald",
   "cobalt",
@@ -23,7 +24,7 @@ export const THEME_IDS = [
 
 export type ThemeId = (typeof THEME_IDS)[number];
 
-export const DEFAULT_THEME: ThemeId = "violet";
+export const DEFAULT_THEME: ThemeId = "bsign";
 
 export const STORAGE_KEY = "wacrm.theme";
 
@@ -32,18 +33,19 @@ export const STORAGE_KEY = "wacrm.theme";
  *
  * The CSS variables live in `src/app/globals.css` under
  * `html[data-mode="..."]` blocks (neutral surfaces only). Applied
- * at runtime via `document.documentElement.dataset.mode`. Dark is
- * the historical default and stays the app's identity; light is the
- * opt-in eye-strain-friendly alternative.
+ * at runtime via `document.documentElement.dataset.mode`. Light is
+ * the default because that is what BSign looks like — white cards on
+ * a cream ground; dark is the same palette the site's own admin panel
+ * switches to at night.
  *
  * Persisted under its own localStorage key so it composes freely
- * with the accent choice (you can run Violet-light or Violet-dark).
+ * with the accent choice (you can run BSign-light or BSign-dark).
  */
 export const MODES = ["light", "dark"] as const;
 
 export type Mode = (typeof MODES)[number];
 
-export const DEFAULT_MODE: Mode = "dark";
+export const DEFAULT_MODE: Mode = "light";
 
 export const MODE_STORAGE_KEY = "wacrm.mode";
 
@@ -67,6 +69,16 @@ export interface ThemeMeta {
 }
 
 export const THEMES: ReadonlyArray<ThemeMeta> = [
+  {
+    id: "bsign",
+    name: "BSign",
+    tagline: "The house accent: BSign navy on cream, coral for alerts.",
+    // The only accent whose --primary is mode-aware (navy on light,
+    // lifted indigo on dark), so no single value mirrors it exactly.
+    // The swatch shows the light-mode navy, which is the identity
+    // color people recognise from bsignestudio.com.
+    swatch: "#121643",
+  },
   {
     id: "violet",
     name: "Violet",

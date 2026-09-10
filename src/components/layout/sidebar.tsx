@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
@@ -187,13 +188,19 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Logo row. On mobile we put a close button here; on desktop the
             close button is hidden since the sidebar is always-visible. */}
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <MessageSquare className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-semibold text-foreground">
-              {t("title")}
-            </span>
+          {/* Logo alone, the way the site's own admin sidebar opens — the
+              app name would have to truncate at this width and the mark
+              carries the identity better than a clipped string does. It
+              still labels the link for assistive tech via alt + title. */}
+          <Link href="/dashboard" title={t("title")} className="flex items-center">
+            <Image
+              src="/bsign-logo.png"
+              alt="BSign Estudio"
+              width={696}
+              height={480}
+              priority
+              className="h-10 w-auto dark:brightness-0 dark:invert"
+            />
           </Link>
           <button
             type="button"
@@ -229,9 +236,9 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     href={item.href}
                     className={cn(
                       // Taller on mobile so fingers can hit the row reliably (≥44px).
-                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
+                      "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors duration-200 ease-brand lg:py-2",
                       isActive
-                        ? "bg-primary/10 text-primary"
+                        ? "bg-primary text-primary-foreground"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >
@@ -240,7 +247,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     {item.beta && (
                       <span
                         aria-label={t("beta")}
-                        className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
+                        className={cn(
+                          "rounded-pill border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
+                          // On an active row the chip sits on solid navy,
+                          // where amber has nothing to hold onto — it
+                          // borrows the row's own foreground instead.
+                          isActive
+                            ? "border-primary-foreground/40 bg-primary-foreground/15 text-primary-foreground"
+                            : "border-amber-500/40 bg-amber-500/10 text-amber-300",
+                        )}
                       >
                         {t("beta")}
                       </span>
@@ -250,14 +265,14 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                         aria-label={t("unreadConversations", { count: totalUnread })}
                         className="relative flex h-2 w-2"
                       >
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-coral" />
                       </span>
                     )}
                     {showNotificationBadge && (
                       <span
                         aria-label={t("unreadNotifications", { count: unreadNotifications })}
-                        className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground"
+                        className="flex h-5 min-w-5 items-center justify-center rounded-pill bg-coral px-1 text-[10px] font-semibold text-white"
                       >
                         {unreadNotifications > 9 ? "9+" : unreadNotifications}
                       </span>
@@ -278,9 +293,9 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                   <Link
                     href={item.href}
                     className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
+                      "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors duration-200 ease-brand lg:py-2",
                       isActive
-                        ? "bg-primary/10 text-primary"
+                        ? "bg-primary text-primary-foreground"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >

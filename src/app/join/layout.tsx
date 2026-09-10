@@ -10,9 +10,10 @@
 // visitors through its login redirect. A dedicated layout
 // avoids both.
 //
-// Styling matches the login / signup pages — centered card on a
-// slate-950 background — so the join experience feels like a
-// natural step in the auth funnel rather than a foreign page.
+// Styling matches the login / signup pages — centered card on the
+// BSign navy ground, under the reversed-out logo — so the join
+// experience feels like a natural step in the auth funnel rather
+// than a foreign page.
 //
 // Referrer-Policy: no-referrer
 //   The plaintext invite token lives in the URL path. Without
@@ -25,6 +26,7 @@
 //   export, this surfaces as `<meta name="referrer" content="no-referrer">`.
 // ============================================================
 
+import Image from 'next/image';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
@@ -37,7 +39,18 @@ export const metadata: Metadata = {
 
 export default function JoinLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
+      {/* Same navy ground + reversed-out mark as /login and /signup, so an
+          invited person lands somewhere that already looks like the rest
+          of the funnel they are about to walk through. */}
+      <Image
+        src="/bsign-logo.png"
+        alt="BSign Estudio"
+        width={696}
+        height={480}
+        priority
+        className="h-16 w-auto brightness-0 invert"
+      />
       {children}
     </div>
   );
