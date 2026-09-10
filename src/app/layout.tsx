@@ -6,6 +6,7 @@ import Script from "next/script";
 import "./globals.css";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { ThemedToaster } from "@/components/themed-toaster";
+import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import {
   DEFAULT_MODE,
   DEFAULT_THEME,
@@ -36,8 +37,29 @@ export const metadata: Metadata = {
     index: false,
     follow: false,
   },
+  // /icon is the dynamic favicon route (src/app/icon.tsx) — kept as
+  // the browser-tab icon. The two PNGs are the ones a phone actually
+  // uses once installed: 192 for the home-screen grid, 512 for
+  // anywhere the OS wants a bigger render (app switcher, splash).
+  // Both are also declared in manifest.ts for the install prompt
+  // itself — Chrome/Android reads icons from the manifest, iOS reads
+  // apple.icons below, so both places need them.
   icons: {
-    icon: [{ url: "/icon" }],
+    icon: [
+      { url: "/icon" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
+  // Gets the app running full-screen when launched from an iOS home-
+  // screen icon — iOS ignores the manifest's `display: standalone`,
+  // this is the meta tag it actually reads instead. Android already
+  // gets standalone mode from manifest.ts.
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "wacrm",
   },
   formatDetection: {
     email: false,
@@ -120,6 +142,7 @@ export default async function RootLayout({
           <ThemeProvider>
             {children}
             <ThemedToaster />
+            <ServiceWorkerRegister />
           </ThemeProvider>
         </NextIntlClientProvider>
       </body>

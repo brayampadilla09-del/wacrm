@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline — wacrm</title>
+    <style>
+      /* Deliberately not pulling in the app's own CSS: this page has
+         to render from the service worker cache with zero network
+         calls, including to Google Fonts. Colors are copied from
+         globals.css by hand so it still reads as the same app rather
+         than a generic browser error page. */
+      :root {
+        color-scheme: light dark;
+        --bg: #fbf9f4;
+        --fg: #0a0813;
+        --muted: #78777d;
+        --primary: #121643;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d0e16;
+          --fg: #ecebf0;
+          --muted: #9a9ba8;
+          --primary: #5b6eea;
+        }
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        text-align: center;
+        padding: 24px;
+      }
+      .card {
+        max-width: 22rem;
+      }
+      .dot {
+        width: 48px;
+        height: 48px;
+        margin: 0 auto 16px;
+        border-radius: 999px;
+        background: var(--primary);
+      }
+      h1 {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin: 0 0 8px;
+      }
+      p {
+        color: var(--muted);
+        font-size: 0.875rem;
+        line-height: 1.5;
+        margin: 0 0 20px;
+      }
+      button {
+        border: none;
+        border-radius: 999px;
+        background: var(--primary);
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        padding: 10px 24px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="dot"></div>
+      <h1>You're offline</h1>
+      <p>
+        wacrm needs a connection to load your inbox, contacts and
+        conversations. Reconnect and try again.
+      </p>
+      <button onclick="location.reload()">Retry</button>
+    </div>
+  </body>
+</html>
