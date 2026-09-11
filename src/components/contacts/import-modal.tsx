@@ -392,7 +392,7 @@ export function ImportModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden border-border/80 bg-popover p-0 text-popover-foreground sm:max-w-2xl">
+      <DialogContent className="flex max-h-[min(90vh,720px)] max-h-[min(90dvh,720px)] flex-col gap-0 overflow-hidden border-border/80 bg-popover p-0 text-popover-foreground sm:max-w-2xl">
         <div className="shrink-0 space-y-4 border-b border-border/80 px-6 pt-6 pb-5">
           <DialogHeader className="gap-1.5">
             <DialogTitle className="text-lg text-popover-foreground">

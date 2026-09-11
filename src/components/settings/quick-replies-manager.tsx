@@ -188,7 +188,7 @@ export function QuickRepliesManager() {
             <DialogTitle>{draft?.id ? "Edit quick reply" : "New quick reply"}</DialogTitle>
           </DialogHeader>
           {draft && (
-            <div className="max-h-[70vh] space-y-3 overflow-y-auto">
+            <div className="max-h-[70vh] max-h-[70dvh] space-y-3 overflow-y-auto">
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Name</label>
                 <Input

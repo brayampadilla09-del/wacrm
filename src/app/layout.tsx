@@ -73,6 +73,15 @@ export const viewport: Viewport = {
   // the browser chrome on mobile, so it has to match --background.
   themeColor: "#fbf9f4",
   colorScheme: "light dark",
+  // Lets the layout reach edge-to-edge on a notched phone AND, more to
+  // the point, is what makes the `env(safe-area-inset-*)` values
+  // resolve to anything other than 0. Without it the `pb-safe` utility
+  // in globals.css is a no-op and the composer sits under the iPhone
+  // home indicator once the app is installed to the home screen.
+  // Safe with `apple-mobile-web-app-status-bar-style: default` (set in
+  // metadata above): that keeps content *below* the status bar, so
+  // only the bottom inset needs handling, not the top.
+  viewportFit: "cover",
 };
 
 // Inline boot script — runs before React hydrates so the user's

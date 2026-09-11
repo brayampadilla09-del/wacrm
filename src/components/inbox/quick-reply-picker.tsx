@@ -59,7 +59,7 @@ export function QuickReplyPicker({
         <DialogHeader>
           <DialogTitle>{t("quickReplies")}</DialogTitle>
         </DialogHeader>
-        <div className="max-h-[60vh] overflow-y-auto">
+        <div className="max-h-[60vh] max-h-[60dvh] overflow-y-auto">
           {loading ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />

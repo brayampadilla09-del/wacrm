@@ -309,7 +309,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         </nav>
 
         {/* User section */}
-        <div className="shrink-0 border-t border-border p-3">
+        {/* pb-safe-3 so the account row clears an iPhone's home indicator
+            when the drawer is open in the installed app — it sits flush
+            against the bottom edge, which is exactly where that bar is. */}
+        <div className="shrink-0 border-t border-border p-3 pb-safe-3">
           {/* Account name display — surfaced only when the account
               name differs from the user's own name (see
               `showAccountStrip`). For a default solo account the two

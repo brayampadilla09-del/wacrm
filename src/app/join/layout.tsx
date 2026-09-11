@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 
 export default function JoinLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
+    <div className="flex min-h-screen min-h-dvh flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
       {/* Same navy ground + reversed-out mark as /login and /signup, so an
           invited person lands somewhere that already looks like the rest
           of the funnel they are about to walk through. */}

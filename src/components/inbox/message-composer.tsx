@@ -535,8 +535,12 @@ export function MessageComposer({
 
   // ---- Render --------------------------------------------------------
 
+  // pb-safe-3 keeps the normal 0.75rem padding on a phone with no
+  // gesture bar, and grows to clear the home indicator on one that has
+  // it — otherwise the send button sits underneath it once the app is
+  // installed to the home screen.
   return (
-    <div className="border-t border-border bg-card p-3">
+    <div className="border-t border-border bg-card p-3 pb-safe-3">
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote
@@ -778,7 +782,7 @@ export function MessageComposer({
           <DialogHeader>
             <DialogTitle>{t("interactiveMessage")}</DialogTitle>
           </DialogHeader>
-          <div className="max-h-[70vh] overflow-y-auto">
+          <div className="max-h-[70vh] max-h-[70dvh] overflow-y-auto">
             <InteractiveBuilder
               value={interactivePayload}
               onChange={setInteractivePayload}

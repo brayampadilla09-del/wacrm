@@ -43,7 +43,7 @@ const MIN_PASSWORD_LENGTH = 6;
 
 function AuthFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
+    <div className="flex min-h-screen min-h-dvh flex-col items-center justify-center gap-6 bg-navy px-4 py-10">
       {/* Signing in is where the brand should be loudest: the site puts
           its auth screens on a full navy ground with the mark reversed
           out in white (see AuthShell in pagina-estudio). The logo file

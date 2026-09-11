@@ -561,8 +561,13 @@ function InboxPageInner() {
   // before, unchanged.
   const hasActiveConv = !!activeConversation;
 
+  // dvh over vh for the same reason the shell uses it: on a phone
+  // `100vh` overshoots the visible viewport by the height of the address
+  // bar, which here pushes the composer off the bottom of the screen —
+  // the one control this page exists for. The `-3.5rem` is the header
+  // the shell renders above this pane. vh stays first as the fallback.
   return (
-    <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+    <div className="-m-4 flex h-[calc(100vh-3.5rem)] h-[calc(100dvh-3.5rem)] flex-col overflow-hidden sm:-m-6">
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappConnected === false && (

@@ -430,3 +430,34 @@ html[data-theme="rose"] {
   letter-spacing: 0.08em;
   color: var(--muted-foreground);
 }
+
+/* Bottom safe-area inset — the strip an iPhone reserves for the home
+ * indicator (and any phone reserves for a gesture bar). The env()
+ * resolves to 0px on every device without one, and on every browser
+ * where the page isn't running edge-to-edge, so these are safe to
+ * apply unconditionally: they only add space where space is actually
+ * being taken away.
+ *
+ * Requires `viewportFit: "cover"` on the viewport export (layout.tsx)
+ * — without it the env() resolves to 0 even on a notched phone.
+ *
+ * Each variant ADDS the inset to a stated base padding rather than
+ * replacing it, because replacing is a silent downgrade: a bare
+ * `padding-bottom: env(...)` on an element that already had `p-4`
+ * would drop it from 1rem to 0 on every phone without a gesture bar.
+ * The number in the name is the base it adds to, matching Tailwind's
+ * spacing scale — pb-safe-4 pairs with p-4, pb-safe-6 with p-6. Pair
+ * them at the same breakpoints as the padding they extend
+ * (`p-4 pb-safe-4 sm:p-6 sm:pb-safe-6`), so the responsive variant
+ * wins where it should. */
+@utility pb-safe-3 {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+@utility pb-safe-4 {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+
+@utility pb-safe-6 {
+  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+}
