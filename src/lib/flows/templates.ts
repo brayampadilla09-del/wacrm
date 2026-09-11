@@ -337,12 +337,6 @@ const BSIGN_MENU: FlowTemplate = {
             title: "Nuestros servicios",
             rows: [
               {
-                reply_id: "catalogo",
-                title: "Ver catálogo",
-                description: "Piezas y objetos en concreto",
-                next_node_key: "catalogo_msg",
-              },
-              {
                 reply_id: "agendar",
                 title: "Agendar cita de diseño",
                 description: "Consultoría para tu espacio",
@@ -353,12 +347,6 @@ const BSIGN_MENU: FlowTemplate = {
                 title: "Ver proyectos",
                 description: "Conoce nuestro portafolio",
                 next_node_key: "proyectos_msg",
-              },
-              {
-                reply_id: "pedido",
-                title: "Estado de mi pedido",
-                description: "Consulta un pedido existente",
-                next_node_key: "pedido_msg",
               },
             ],
           },
@@ -383,14 +371,6 @@ const BSIGN_MENU: FlowTemplate = {
       } as SendListNodeConfig,
     },
     {
-      node_key: "catalogo_msg",
-      node_type: "send_message",
-      config: {
-        text: "Tenemos piezas de decoración, mobiliario y objetos en concreto hechos a mano 🧱. Puedes ver el catálogo completo aquí: https://bsignestudio.com/shop\n\nSi tienes dudas de una pieza (tamaños, colores, tiempos de entrega), cuéntame y te ayudo.",
-        next_node_key: "anything_else",
-      } as SendMessageNodeConfig,
-    },
-    {
       node_key: "proyectos_msg",
       node_type: "send_message",
       config: {
@@ -403,14 +383,6 @@ const BSIGN_MENU: FlowTemplate = {
       node_type: "send_message",
       config: {
         text: "Atendemos de lunes a viernes de 9:00 a.m. a 6:00 p.m., y los sábados desde las 10:00 a.m. 📍 Estamos en Barranquilla, y si no puedes venir al estudio también agendamos videollamada por Google Meet.",
-        next_node_key: "anything_else",
-      } as SendMessageNodeConfig,
-    },
-    {
-      node_key: "pedido_msg",
-      node_type: "send_message",
-      config: {
-        text: "Puedes ver el estado y la línea de tiempo completa de todos tus pedidos aquí: https://bsignestudio.com/profile/orders 📦\n\nInicia sesión con el mismo correo o WhatsApp de la compra y ahí verás el detalle actualizado al instante.",
         next_node_key: "anything_else",
       } as SendMessageNodeConfig,
     },
