@@ -131,8 +131,14 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Metric cards.
+          Two columns on a phone, not one: at one-per-row these four
+          cards ran to roughly two and a half screens of scrolling to
+          read four numbers, which is the opposite of what a dashboard
+          is for. Paired up they fit in a single glance. MetricCard
+          drops its icon and tightens its type below sm to earn the
+          narrower column. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         {metricsLoading || !metrics ? (
           Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (

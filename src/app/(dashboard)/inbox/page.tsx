@@ -582,10 +582,24 @@ function InboxPageInner() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel: Conversation list.
             Hidden on mobile when a conversation is selected so the
-            thread can occupy the full width. Always visible on lg+. */}
+            thread can occupy the full width. Always visible on lg+.
+
+            `min-w-0` for the same reason the thread panel below carries
+            it, and it was missing here. A flex item's floor is its
+            min-content width, and this one's content is conversation
+            previews — a row of unbroken message text. Without the
+            override the panel sized itself to the longest preview
+            (measured: 1268px inside a 390px viewport) and the parent's
+            overflow-hidden simply clipped the excess: no scrollbar, and
+            `truncate` computing its ellipsis against 1267px so it never
+            had anything to cut. That's why message previews and the
+            search field ran off the right edge of the phone with no
+            visible way to reach them. Desktop never showed it because
+            `lg:flex-none` + the list's own `lg:w-80` pin the width
+            there. */}
         <div
           className={cn(
-            "flex h-full flex-1 lg:flex-none",
+            "flex h-full min-w-0 flex-1 lg:flex-none",
             hasActiveConv ? "hidden lg:flex" : "flex",
           )}
         >

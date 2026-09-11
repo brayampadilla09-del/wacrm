@@ -66,7 +66,7 @@ export default function AutomationLogsPage({
 
   if (error) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-3">
+      <div className="flex h-64 flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="text-sm text-red-400">{error}</p>
         <Button variant="outline" onClick={() => router.push("/automations")}>
           {t("back")}

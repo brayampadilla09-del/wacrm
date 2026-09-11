@@ -139,7 +139,7 @@ export default function AutomationsPage() {
 
   if (error) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2">
+      <div className="flex h-64 flex-col items-center justify-center gap-2 px-6 text-center">
         <p className="text-sm text-red-400">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           {t("retry")}

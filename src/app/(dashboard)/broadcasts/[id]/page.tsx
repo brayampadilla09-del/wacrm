@@ -254,7 +254,7 @@ export default function BroadcastDetailPage() {
 
   if (error || !broadcast) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2">
+      <div className="flex h-64 flex-col items-center justify-center gap-2 px-6 text-center">
         <p className="text-sm text-red-400">{error ?? t('notFound')}</p>
         <Button variant="outline" onClick={() => router.push('/broadcasts')}>
           {t('backToBroadcasts')}

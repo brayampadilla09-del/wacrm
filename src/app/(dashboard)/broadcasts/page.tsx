@@ -141,7 +141,7 @@ export default function BroadcastsPage() {
 
   if (error) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2">
+      <div className="flex h-64 flex-col items-center justify-center gap-2 px-6 text-center">
         <p className="text-sm text-red-400">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           {t('retry')}
@@ -199,7 +199,7 @@ export default function BroadcastsPage() {
       </div>
 
       {broadcasts.length === 0 ? (
-        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card">
+        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card px-6 text-center">
           <Radio className="mb-3 h-10 w-10 text-muted-foreground" />
           <p className="text-sm font-medium text-foreground">{t('noBroadcastsYet')}</p>
           <p className="mt-1 text-xs text-muted-foreground">

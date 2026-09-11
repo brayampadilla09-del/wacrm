@@ -349,7 +349,12 @@ export default function ContactsPage() {
             {totalCount > 0 ? t('subtitle', { count: totalCount }) : t('subtitleZero')}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* flex-wrap: three buttons ("Custom fields", "Import", "Add
+            contact") don't fit on one 390px row — without wrapping, the
+            last one ran off the right edge and read "Add Con". Wrapping
+            to a second line keeps every label intact rather than
+            squeezing them. */}
+        <div className="flex flex-wrap items-center gap-2">
           {canEditSettings && (
             <Button
               variant="outline"

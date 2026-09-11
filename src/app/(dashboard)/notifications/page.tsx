@@ -144,7 +144,7 @@ export default function NotificationsPage() {
 
   if (error) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2">
+      <div className="flex h-64 flex-col items-center justify-center gap-2 px-6 text-center">
         <p className="text-sm text-destructive">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           Retry
