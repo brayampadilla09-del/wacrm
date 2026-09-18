@@ -192,7 +192,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               app name would have to truncate at this width and the mark
               carries the identity better than a clipped string does. It
               still labels the link for assistive tech via alt + title. */}
-          <Link href="/dashboard" title={t("title")} className="flex items-center">
+          <Link href="/dashboard" title={t("title")} className="flex items-center gap-2">
             <Image
               src="/bsign-logo.png"
               alt="BSign Estudio"
@@ -201,6 +201,9 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               priority
               className="h-10 w-auto dark:brightness-0 dark:invert"
             />
+            <span className="text-sm font-semibold text-foreground">
+              Chat BIMI
+            </span>
           </Link>
           <button
             type="button"
