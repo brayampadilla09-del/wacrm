@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
+import { resolveChannelConfig } from '@/lib/whatsapp/channels';
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
 import {
   checkRateLimit,
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
 
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
-      .select('id, account_id, contact:contacts(phone)')
+      .select('id, account_id, channel_id, contact:contacts(phone)')
       .eq('id', targetMessage.conversation_id)
       .eq('account_id', accountId)
       .maybeSingle();
@@ -88,12 +89,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // WhatsApp config + access token. Account-scoped post-multi-user.
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token')
-      .eq('account_id', accountId)
-      .single();
+    // WhatsApp config + access token, scoped to the conversation's own
+    // channel (migration 039) — an account can have more than one number.
+    const { data: config, error: configError } = await resolveChannelConfig(
+      supabase,
+      accountId,
+      conversation.channel_id,
+    );
 
     if (configError || !config) {
       return NextResponse.json(

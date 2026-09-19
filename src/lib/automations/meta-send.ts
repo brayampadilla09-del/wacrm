@@ -13,6 +13,7 @@ import {
 } from '@/lib/whatsapp/phone-utils'
 import { renderTemplateBody } from '@/lib/whatsapp/template-render'
 import { supabaseAdmin } from './admin-client'
+import { resolveChannelConfig } from '@/lib/whatsapp/channels'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -119,7 +120,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, channel_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
@@ -132,11 +133,14 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
+  // Send through the contact's own channel (migration 039) — an
+  // account can have more than one whatsapp_config row now, so this
+  // can no longer assume "the account's one row".
+  const { data: config, error: configErr } = await resolveChannelConfig(
+    db,
+    input.accountId,
+    contact.channel_id,
+  )
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }

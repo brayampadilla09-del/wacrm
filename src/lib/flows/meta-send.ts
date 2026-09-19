@@ -16,6 +16,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { resolveChannelConfig } from '@/lib/whatsapp/channels'
 
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
@@ -69,7 +70,7 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, channel_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
@@ -82,11 +83,14 @@ export async function engineSendText(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
+  // Send through the contact's own channel (migration 039) — an
+  // account can have more than one whatsapp_config row now, so this
+  // can no longer assume "the account's one row".
+  const { data: config, error: configErr } = await resolveChannelConfig(
+    db,
+    args.accountId,
+    contact.channel_id,
+  )
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }
@@ -179,7 +183,7 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, channel_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
@@ -192,11 +196,14 @@ export async function engineSendMedia(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
+  // Send through the contact's own channel (migration 039) — an
+  // account can have more than one whatsapp_config row now, so this
+  // can no longer assume "the account's one row".
+  const { data: config, error: configErr } = await resolveChannelConfig(
+    db,
+    args.accountId,
+    contact.channel_id,
+  )
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }
@@ -331,7 +338,7 @@ async function sendInteractiveViaMeta(
   // Migration 017 moved both tables to account-scoped tenancy.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, channel_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
@@ -344,11 +351,14 @@ async function sendInteractiveViaMeta(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
+  // Send through the contact's own channel (migration 039) — an
+  // account can have more than one whatsapp_config row now, so this
+  // can no longer assume "the account's one row".
+  const { data: config, error: configErr } = await resolveChannelConfig(
+    db,
+    input.accountId,
+    contact.channel_id,
+  )
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }

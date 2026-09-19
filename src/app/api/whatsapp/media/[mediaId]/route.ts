@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveChannelConfig } from '@/lib/whatsapp/channels'
 
 export async function GET(
   request: Request,
@@ -48,12 +49,13 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    // Fetch and decrypt WhatsApp config. This route only gets a bare
+    // Meta media id (no conversation/channel context), so it can't
+    // resolve which of the account's channels the media belongs to —
+    // falls back to the default channel (migration 039). Media on a
+    // non-default channel may 404 here until this route is given a
+    // channel/conversation hint to scope by.
+    const { data: config, error: configError } = await resolveChannelConfig(supabase, accountId)
 
     if (configError || !config) {
       return NextResponse.json(
