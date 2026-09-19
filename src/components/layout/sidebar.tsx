@@ -6,11 +6,13 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { useChannel } from "@/hooks/use-channel";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import {
   Bell,
   Bot,
+  ChevronsUpDown,
   Crown,
   GitBranch,
   LayoutDashboard,
@@ -118,6 +120,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const { channels, currentChannelId, currentChannel, setCurrentChannelId } = useChannel();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
   // Only surface the account-name strip when it actually carries
@@ -214,6 +217,64 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {/* Channel switcher — only shown once the account has more than
+            one WhatsApp channel (migration 039). Below that threshold
+            there's nothing to switch between, so it stays hidden to
+            keep the single-channel experience unchanged. */}
+        {channels.length > 1 && (
+          <div className="shrink-0 border-b border-border p-3">
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-left transition-colors hover:bg-muted focus:outline-none data-popup-open:bg-muted">
+                {currentChannel?.kind === "human" ? (
+                  <User className="size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <Bot className="size-4 shrink-0 text-muted-foreground" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                  {currentChannel?.label ?? t("selectChannel")}
+                </span>
+                <span
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    currentChannel?.status === "connected"
+                      ? "bg-emerald-500"
+                      : "bg-muted-foreground/40",
+                  )}
+                />
+                <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="min-w-56 bg-popover text-popover-foreground ring-border"
+              >
+                {channels.map((c) => (
+                  <DropdownMenuItem
+                    key={c.id}
+                    onClick={() => setCurrentChannelId(c.id)}
+                    className={cn(
+                      "text-popover-foreground focus:bg-accent focus:text-accent-foreground",
+                      c.id === currentChannelId && "bg-accent/60",
+                    )}
+                  >
+                    {c.kind === "human" ? (
+                      <User className="size-4" />
+                    ) : (
+                      <Bot className="size-4" />
+                    )}
+                    <span className="flex-1 truncate">{c.label}</span>
+                    <span
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full",
+                        c.status === "connected" ? "bg-emerald-500" : "bg-muted-foreground/40",
+                      )}
+                    />
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
 
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">

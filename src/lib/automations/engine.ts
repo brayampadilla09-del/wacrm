@@ -51,6 +51,15 @@ export interface DispatchInput {
    *  field; the per-automation user_id is read off each row when
    *  needed (sender identity for outbound messages, log audit). */
   accountId: string
+  /** Which WhatsApp number the triggering event happened on (migration
+   *  039). Only automations saved against this same channel fire — an
+   *  account's two numbers run fully independent automations. Optional
+   *  because not every dispatch site is tied to one number (e.g. a tag
+   *  added from the CRM UI isn't "on" a channel) — omit it to match
+   *  every channel, the pre-039 behavior. The inbound webhook always
+   *  passes it so Bimi's automations can't fire on the advisor's number
+   *  and vice versa. */
+  channelId?: string | null
   triggerType: AutomationTriggerType
   contactId?: string | null
   context?: AutomationContext
@@ -98,12 +107,14 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
       }
     }
 
-    const { data: automations, error } = await db
+    let automationsQuery = db
       .from('automations')
       .select('*')
       .eq('account_id', input.accountId)
       .eq('trigger_type', input.triggerType)
       .eq('is_active', true)
+    if (input.channelId) automationsQuery = automationsQuery.eq('channel_id', input.channelId)
+    const { data: automations, error } = await automationsQuery
 
     if (error) {
       console.error('[automations] fetch failed:', error)
@@ -576,8 +587,12 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         .eq('id', args.automation.account_id)
         .maybeSingle()
       await db.from('deals').insert({
-        // Tenancy + audit, same split as automation_logs above.
+        // Tenancy + audit, same split as automation_logs above. channel_id
+        // (migration 039) matches the automation's own channel — the
+        // automation only ever runs for messages on that channel, so the
+        // contact and the deal it spawns are on the same one.
         account_id: args.automation.account_id,
+        channel_id: args.automation.channel_id,
         user_id: args.automation.user_id,
         pipeline_id: cfg.pipeline_id,
         stage_id: cfg.stage_id,

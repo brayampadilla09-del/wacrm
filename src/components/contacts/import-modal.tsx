@@ -218,6 +218,18 @@ export function ImportModal({
       if (!accountId)
         throw new Error('Your profile is not linked to an account.');
 
+      // No channel switcher in this import flow yet (migration 039) —
+      // imported contacts land on the account's default channel.
+      const { data: defaultChannel } = await supabase
+        .from('whatsapp_config')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('is_default', true)
+        .maybeSingle();
+      if (!defaultChannel) {
+        throw new Error('WhatsApp not configured for this account.');
+      }
+
       let imported = 0;
       let skipped = 0;
       let failed = 0;
@@ -274,6 +286,7 @@ export function ImportModal({
         const rows = chunk.map((row) => ({
           user_id: user.id,
           account_id: accountId,
+          channel_id: defaultChannel.id,
           phone: row.phone,
           name: row.name || null,
           email: row.email || null,

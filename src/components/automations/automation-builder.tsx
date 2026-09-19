@@ -62,6 +62,7 @@ import {
 } from "@/components/interactive/interactive-builder"
 import { interactivePayloadPreviewText } from "@/lib/whatsapp/interactive"
 import { createClient } from "@/lib/supabase/client"
+import { useChannel } from "@/hooks/use-channel"
 import { cn } from "@/lib/utils"
 
 // ------------------------------------------------------------
@@ -626,6 +627,7 @@ function SendTemplateFields({
 export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   const router = useRouter()
   const t = useTranslations("Automations.builder")
+  const { currentChannelId: channelId } = useChannel()
   const isEditing = !!initial.id
   const [state, setState] = useState<BuilderInitial>(initial)
   const [saving, setSaving] = useState(false)
@@ -669,6 +671,9 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         trigger_type: state.trigger_type,
         trigger_config: state.trigger_config,
         is_active: state.is_active,
+        // Only consulted on create (migration 039) — an edit keeps the
+        // automation's existing channel regardless of which tab is open.
+        channel_id: channelId,
         steps: toApiSteps(state.steps),
       }
 

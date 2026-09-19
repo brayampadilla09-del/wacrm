@@ -353,6 +353,7 @@ describe("triggerMatches — interactive_reply", () => {
     return {
       id: "a1",
       account_id: ACCOUNT,
+      channel_id: "channel-1",
       user_id: "u1",
       name: "menu step",
       trigger_type: "interactive_reply",
@@ -393,6 +394,7 @@ describe("triggerMatches — tag_added", () => {
     return {
       id: "a1",
       account_id: ACCOUNT,
+      channel_id: "channel-1",
       user_id: "u1",
       name: "tag follow-up",
       trigger_type: "tag_added",

@@ -38,7 +38,8 @@
     "defaultAvatar": "아바타",
     "menuProfile": "프로필",
     "menuSettings": "설정",
-    "menuSignOut": "로그아웃"
+    "menuSignOut": "로그아웃",
+    "selectChannel": "채널 선택"
   },
   "Header": {
     "dashboard": "대시보드",
@@ -1493,7 +1494,22 @@
       "step4_3": "위의 <strong class=\"text-foreground\">웹훅 콜백 URL</strong>을 붙여넣기",
       "step4_4": "여기서 설정한 것과 동일한 <strong class=\"text-foreground\">인증 토큰</strong>을 입력",
       "step4_5": "\"messages\" 웹훅 필드를 구독",
-      "metaDocs": "Meta WhatsApp API 문서"
+      "metaDocs": "Meta WhatsApp API 문서",
+      "addChannel": "번호 추가",
+      "addChannelTitle": "WhatsApp 번호 추가",
+      "addChannelDesc": "두 번째 번호를 독립된 채널로 연결하세요 — 다른 번호와 별도의 받은편지함, 연락처, 자동화를 가집니다.",
+      "newChannelLabelField": "채널 이름",
+      "newChannelLabelPlaceholder": "예: Asesor",
+      "newChannelKindField": "채널 유형",
+      "newChannelKindBot": "봇 (자동)",
+      "newChannelKindBotDesc": "플로우, 자동화, AI 자동 응답을 실행합니다 — 주 공개 번호용.",
+      "newChannelKindHuman": "사람 (수동)",
+      "newChannelKindHumanDesc": "받은편지함만 — 플로우, 자동화, AI 없음. 직접 응답하는 사람용.",
+      "createChannel": "채널 추가",
+      "creatingChannel": "추가 중...",
+      "defaultBadge": "기본",
+      "botBadge": "봇",
+      "humanBadge": "사람"
     },
     "sections": {
       "overview": "개요",

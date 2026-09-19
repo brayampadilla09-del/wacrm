@@ -31,22 +31,30 @@ export interface ExistingContact {
  * or null. Pre-filters in SQL by the last-8-digit suffix (so we don't
  * pull every contact), then applies the strict `phonesMatch` in JS on
  * the small candidate set — the exact approach the webhook has used.
+ *
+ * `channelId` scopes the search to one WhatsApp channel (migration
+ * 039 — the same phone can be an independent contact per channel).
+ * Omit it only for call sites that predate multi-channel and haven't
+ * been given a channel selector yet; they'll match across every
+ * channel of the account instead of just one, which is the closest
+ * approximation of their pre-039 behavior.
  */
 export async function findExistingContact(
   db: SupabaseClient,
   accountId: string,
   phone: string,
+  channelId?: string | null,
 ): Promise<ExistingContact | null> {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
 
   const suffix = normalized.length >= 8 ? normalized.slice(-8) : normalized;
 
-  const { data, error } = await db
-    .from("contacts")
-    .select("*")
-    .eq("account_id", accountId)
-    .like("phone", `%${suffix}`);
+  let query = db.from("contacts").select("*").eq("account_id", accountId);
+  if (channelId) query = query.eq("channel_id", channelId);
+  query = query.like("phone", `%${suffix}`);
+
+  const { data, error } = await query;
 
   if (error || !data) return null;
 

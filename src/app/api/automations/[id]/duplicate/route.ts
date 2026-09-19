@@ -37,9 +37,10 @@ export async function POST(
   const { data: copy, error: copyErr } = await admin
     .from('automations')
     .insert({
-      // Clone into the same account as the original. account_id is NOT
-      // NULL post-017, so the INSERT fails the constraint without it.
+      // Clone into the same account + channel as the original. Both
+      // columns are NOT NULL (017, 039), so the INSERT fails without them.
       account_id: original.account_id,
+      channel_id: original.channel_id,
       user_id: user.id,
       name: `${original.name} (Copy)`,
       description: original.description,

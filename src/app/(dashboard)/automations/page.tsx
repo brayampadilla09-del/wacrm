@@ -20,6 +20,7 @@ import {
 
 import { createClient } from "@/lib/supabase/client"
 import { useCan } from "@/hooks/use-can"
+import { useChannel } from "@/hooks/use-channel"
 import { useTranslations } from "next-intl"
 import type { Automation } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -61,6 +62,7 @@ const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
 export default function AutomationsPage() {
   const router = useRouter()
   const canCreate = useCan("send-messages")
+  const { currentChannelId: channelId } = useChannel()
   const t = useTranslations("Automations.list")
   const [automations, setAutomations] = useState<Automation[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -68,11 +70,18 @@ export default function AutomationsPage() {
   const [deleting, setDeleting] = useState(false)
 
   async function load() {
+    // No channel resolved yet — skip rather than mixing every
+    // channel's automations together (migration 039).
+    if (!channelId) {
+      setAutomations([])
+      return
+    }
     try {
       const supabase = createClient()
       const { data, error: fetchErr } = await supabase
         .from("automations")
         .select("*")
+        .eq("channel_id", channelId)
         .order("created_at", { ascending: false })
       if (fetchErr) throw fetchErr
       setAutomations((data ?? []) as Automation[])
@@ -83,7 +92,8 @@ export default function AutomationsPage() {
 
   useEffect(() => {
     load()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelId])
 
   async function toggleActive(a: Automation, next: boolean) {
     // Optimistic flip so the switch feels instant.

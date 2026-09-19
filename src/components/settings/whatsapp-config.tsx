@@ -13,15 +13,27 @@ import {
   Zap,
   AlertTriangle,
   RotateCcw,
+  Plus,
+  Bot,
+  User,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useTranslations } from 'next-intl';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
   Accordion,
@@ -35,16 +47,322 @@ const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
+type ChannelKind = 'bot' | 'human';
 
+/** Row shape returned by GET /api/whatsapp/config/channels — no secrets. */
+interface ChannelSummary {
+  id: string;
+  label: string;
+  kind: ChannelKind;
+  is_default: boolean;
+  notify_user_id: string | null;
+  phone_number_id: string | null;
+  status: ConnectionStatus;
+}
+
+/**
+ * WhatsApp channels settings. An account can own more than one channel
+ * (migration 039 — e.g. "Bimi" the bot number + "Asesor" a human
+ * advisor's own number), each independently connected. This component
+ * lists them as tabs and renders the full connect/verify/reset form
+ * (`ChannelPanel`) for whichever one is selected.
+ */
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
-  const supabase = createClient();
-  // After multi-user, whatsapp_config is one-row-per-account, not
-  // one-row-per-user. We pull `accountId` straight off the auth
-  // context and key every read off it — so a teammate who just
-  // joined an account sees the inviter's saved config without
-  // having to re-enter anything.
   const { user, accountId, loading: authLoading, profileLoading } = useAuth();
+
+  const [channels, setChannels] = useState<ChannelSummary[] | null>(null);
+  const [channelsLoading, setChannelsLoading] = useState(true);
+  const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const loadedAccountIdRef = useRef<string | null>(null);
+
+  const fetchChannels = useCallback(async (selectId?: string) => {
+    setChannelsLoading(true);
+    try {
+      const res = await fetch('/api/whatsapp/config/channels', { cache: 'no-store' });
+      const data = await res.json();
+      const list: ChannelSummary[] = data.channels ?? [];
+      setChannels(list);
+      setActiveChannelId((prev) => {
+        if (selectId && list.some((c) => c.id === selectId)) return selectId;
+        if (prev && list.some((c) => c.id === prev)) return prev;
+        return list.find((c) => c.is_default)?.id ?? list[0]?.id ?? null;
+      });
+    } catch (err) {
+      console.error('Failed to load channels:', err);
+      toast.error('Failed to load WhatsApp channels');
+    } finally {
+      setChannelsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Need both the auth session (`!authLoading`) AND the profile
+    // (`!profileLoading`, which carries `accountId`). Without the
+    // second guard, the effect would fire with `accountId === null`
+    // for the first render window and bail without ever retrying
+    // once the profile arrives.
+    if (authLoading || profileLoading) return;
+    if (!user || !accountId) {
+      loadedAccountIdRef.current = null;
+      setChannelsLoading(false);
+      return;
+    }
+    if (loadedAccountIdRef.current === accountId) return;
+    loadedAccountIdRef.current = accountId;
+    fetchChannels();
+  }, [authLoading, profileLoading, user?.id, accountId, fetchChannels]);
+
+  if (channelsLoading) {
+    return (
+      <section className="animate-in fade-in-50 duration-200">
+        <SettingsPanelHead title={t('title')} description={t('description')} />
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="size-6 animate-spin text-primary" />
+        </div>
+      </section>
+    );
+  }
+
+  const activeChannel = channels?.find((c) => c.id === activeChannelId) ?? null;
+
+  return (
+    <section className="animate-in fade-in-50 duration-200">
+      <SettingsPanelHead title={t('title')} description={t('description')} />
+
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        {(channels ?? []).map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setActiveChannelId(c.id)}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors',
+              c.id === activeChannelId
+                ? 'border-primary bg-primary/10 text-foreground'
+                : 'border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted',
+            )}
+          >
+            {c.kind === 'bot' ? <Bot className="size-4" /> : <User className="size-4" />}
+            {c.label}
+            {c.is_default && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {t('defaultBadge')}
+              </span>
+            )}
+            <span
+              className={cn(
+                'size-1.5 rounded-full',
+                c.status === 'connected' ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+              )}
+            />
+          </button>
+        ))}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setAddOpen(true)}
+          className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+        >
+          <Plus className="size-4" />
+          {t('addChannel')}
+        </Button>
+      </div>
+
+      {activeChannel ? (
+        <ChannelPanel
+          key={activeChannel.id}
+          channelId={activeChannel.id}
+          onChanged={() => fetchChannels(activeChannel.id)}
+        />
+      ) : (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            {t('addChannelDesc')}
+          </CardContent>
+        </Card>
+      )}
+
+      <AddChannelDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onCreated={(id) => {
+          setAddOpen(false);
+          fetchChannels(id);
+        }}
+      />
+    </section>
+  );
+}
+
+function AddChannelDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (channelId: string) => void;
+}) {
+  const t = useTranslations('Settings.whatsapp');
+  const [label, setLabel] = useState('');
+  const [kind, setKind] = useState<ChannelKind>('human');
+  const [phoneNumberId, setPhoneNumberId] = useState('');
+  const [accessToken, setAccessToken] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setLabel('');
+      setKind('human');
+      setPhoneNumberId('');
+      setAccessToken('');
+    }
+  }, [open]);
+
+  async function handleCreate() {
+    if (!label.trim()) {
+      toast.error(`${t('newChannelLabelField')} is required`);
+      return;
+    }
+    if (!phoneNumberId.trim() || !accessToken.trim()) {
+      toast.error('Phone Number ID and Access Token are required');
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch('/api/whatsapp/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: label.trim(),
+          kind,
+          phone_number_id: phoneNumberId.trim(),
+          access_token: accessToken.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to create channel');
+        return;
+      }
+      toast.success(`"${label.trim()}" connected.`);
+      // The POST response doesn't echo the new row's id — refetch by
+      // label match isn't reliable, so the parent just reloads the
+      // list and falls back to the default channel; good enough since
+      // the new channel's card is right there in the tab strip.
+      onCreated(data.channel_id ?? '');
+    } catch (err) {
+      console.error('Create channel error:', err);
+      toast.error('Failed to create channel');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('addChannelTitle')}</DialogTitle>
+          <DialogDescription>{t('addChannelDesc')}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="space-y-2">
+            <Label className="text-muted-foreground">{t('newChannelLabelField')}</Label>
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={t('newChannelLabelPlaceholder')}
+              className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-muted-foreground">{t('newChannelKindField')}</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['bot', 'human'] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setKind(k)}
+                  className={cn(
+                    'rounded-md border p-3 text-left transition-colors',
+                    kind === k
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:bg-muted',
+                  )}
+                >
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    {k === 'bot' ? <Bot className="size-4" /> : <User className="size-4" />}
+                    {k === 'bot' ? t('newChannelKindBot') : t('newChannelKindHuman')}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {k === 'bot' ? t('newChannelKindBotDesc') : t('newChannelKindHumanDesc')}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-muted-foreground">{t('phoneNumberId')}</Label>
+            <Input
+              placeholder="e.g. 100234567890123"
+              value={phoneNumberId}
+              onChange={(e) => setPhoneNumberId(e.target.value)}
+              className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-muted-foreground">{t('accessToken')}</Label>
+            <Input
+              type="password"
+              placeholder={t('accessTokenPlaceholder')}
+              value={accessToken}
+              onChange={(e) => setAccessToken(e.target.value)}
+              className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            You can add the WABA ID, verify token, and 2-step PIN afterwards from this
+            channel&apos;s own card.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={creating}>
+            Cancel
+          </Button>
+          <Button onClick={handleCreate} disabled={creating}>
+            {creating ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                {t('creatingChannel')}
+              </>
+            ) : (
+              t('createChannel')
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Full connect / verify / reset form for a single channel. */
+function ChannelPanel({
+  channelId,
+  onChanged,
+}: {
+  channelId: string;
+  onChanged: () => void;
+}) {
+  const t = useTranslations('Settings.whatsapp');
+  const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -55,13 +373,6 @@ export function WhatsAppConfig() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
-  // Guards against re-hydrating the form when the load effect below
-  // re-runs for reasons unrelated to actually switching accounts —
-  // e.g. Supabase's onAuthStateChange fires a token refresh (new
-  // `user` object, profileLoading flips true/false) when the browser
-  // tab regains focus. Without this, that churn calls fetchConfig()
-  // again and overwrites whatever the user typed but hadn't saved yet.
-  const loadedAccountIdRef = useRef<string | null>(null);
 
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
@@ -70,10 +381,6 @@ export function WhatsAppConfig() {
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
 
-  // True once /register has succeeded on Meta's side (timestamp set
-  // in the row). When false, the saved config is metadata-only and
-  // Meta will silently drop every inbound event — that's the
-  // multi-number bug that prompted this work.
   const isRegistered = Boolean(config?.registered_at);
   const lastRegistrationError = config?.last_registration_error ?? null;
 
@@ -86,38 +393,31 @@ export function WhatsAppConfig() {
     registered_at?: string | null;
     subscribed_apps_at?: string | null;
   };
-  const [registrationProbe, setRegistrationProbe] =
-    useState<RegistrationProbe | null>(null);
+  const [registrationProbe, setRegistrationProbe] = useState<RegistrationProbe | null>(null);
 
   const webhookUrl =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/api/whatsapp/webhook`
-      : '';
+    typeof window !== 'undefined' ? `${window.location.origin}/api/whatsapp/webhook` : '';
 
-  const fetchConfig = useCallback(async (acctId: string) => {
+  const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      // Load form values from Supabase (shows what's in DB).
-      // Switched from `user_id` (which would only match the row's
-      // original author) to `account_id` so every member of the
-      // account sees the same saved configuration. UNIQUE(account_id)
-      // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
       const { data, error } = await supabase
         .from('whatsapp_config')
         .select('*')
-        .eq('account_id', acctId)
+        .eq('id', channelId)
         .maybeSingle();
 
       if (error) {
         console.error('Failed to load config row:', error);
       }
 
+      const hasCredentials = !!data?.phone_number_id && !!data?.access_token;
+
       if (data) {
         setConfig(data);
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
-        setAccessToken(MASKED_TOKEN);
+        setAccessToken(hasCredentials ? MASKED_TOKEN : '');
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
@@ -130,13 +430,13 @@ export function WhatsAppConfig() {
         setPin('');
         setTokenEdited(false);
       }
-      // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
 
-      // Then verify health via the API (decrypts token + pings Meta)
-      if (data) {
+      if (hasCredentials) {
         try {
-          const res = await fetch('/api/whatsapp/config', { method: 'GET' });
+          const res = await fetch(`/api/whatsapp/config?channel_id=${channelId}`, {
+            method: 'GET',
+          });
           const payload = await res.json();
 
           if (payload.connected) {
@@ -145,7 +445,13 @@ export function WhatsAppConfig() {
             setStatusMessage('');
           } else {
             setConnectionStatus('disconnected');
-            setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+            setResetReason(
+              payload.needs_reset
+                ? 'token_corrupted'
+                : payload.reason === 'meta_api_error'
+                  ? 'meta_api_error'
+                  : null,
+            );
             setStatusMessage(payload.message || '');
           }
         } catch (err) {
@@ -163,31 +469,20 @@ export function WhatsAppConfig() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, channelId]);
 
   useEffect(() => {
-    // Need both the auth session (`!authLoading`) AND the profile
-    // (`!profileLoading`, which carries `accountId`). Without the
-    // second guard, the effect would fire with `accountId === null`
-    // for the first render window and bail without ever retrying
-    // once the profile arrives.
-    if (authLoading || profileLoading) return;
-    if (!user || !accountId) {
-      loadedAccountIdRef.current = null;
-      setLoading(false);
-      return;
-    }
-    if (loadedAccountIdRef.current === accountId) return;
-    loadedAccountIdRef.current = accountId;
-    fetchConfig(accountId);
-  }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+    fetchConfig();
+  }, [fetchConfig]);
+
+  const hasCredentials = !!config?.phone_number_id && !!config?.access_token;
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
       toast.error('Phone Number ID is required');
       return;
     }
-    if (!config && (!accessToken.trim() || !tokenEdited)) {
+    if (!hasCredentials && (!accessToken.trim() || !tokenEdited)) {
       toast.error('Access Token is required for initial setup');
       return;
     }
@@ -195,27 +490,17 @@ export function WhatsAppConfig() {
     try {
       setSaving(true);
 
-      // Always POST through the API — it verifies with Meta and encrypts
-      // the access_token server-side with ENCRYPTION_KEY. Skipping this
-      // and writing direct to Supabase stores the token in plaintext,
-      // which then fails decryption on every subsequent health check.
       const payload: Record<string, unknown> = {
+        channel_id: channelId,
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
         verify_token: verifyToken.trim() || null,
-        // Optional — only sent when the user filled it in. The server
-        // requires it on first save or when changing numbers; for a
-        // simple token rotation, leaving it blank skips re-register.
         pin: pin.trim() || null,
       };
 
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
         payload.access_token = accessToken.trim();
-      } else if (config) {
-        // Existing config — reuse stored encrypted token by decrypting on the
-        // server. But our POST handler requires an access_token to verify
-        // with Meta. If the user didn't change the token, we need to signal
-        // that. Simplest: require token re-entry if they're updating.
+      } else if (hasCredentials) {
         toast.error('Please re-enter the Access Token to save changes');
         setSaving(false);
         return;
@@ -235,22 +520,12 @@ export function WhatsAppConfig() {
         return;
       }
 
-      // The route now returns a structured outcome:
-      //   * registered=true   → number is live, events will flow
-      //   * registered=false  → credentials saved but /register
-      //                         failed; UI shows the specific error
-      //                         and a retry path. registration_error
-      //                         is human-readable from Meta.
       if (data.registered === false && data.registration_error) {
         toast.error(
           `Saved, but Meta couldn't register the number: ${data.registration_error}`,
           { duration: 12000 },
         );
       } else if (data.registration_skipped) {
-        // Credentials saved + verified, but /register was skipped
-        // because no PIN was supplied (e.g. a Meta test number).
-        // Don't claim the number is "Live" — point at the
-        // Registration status banner instead.
         toast.success(
           'Credentials saved and verified. Inbound registration was skipped (no PIN) — see Registration status below.',
           { duration: 10000 },
@@ -262,13 +537,11 @@ export function WhatsAppConfig() {
             ? `Live — ${data.phone_info.verified_name} can now receive events.`
             : 'WhatsApp connected. Events will start flowing within a minute.',
         );
-        // Clear the PIN so subsequent saves don't accidentally
-        // re-register (which would void the active subscription if
-        // the PIN became stale).
         setPin('');
       }
 
-      if (accountId) await fetchConfig(accountId);
+      await fetchConfig();
+      onChanged();
     } catch (err) {
       console.error('Save error:', err);
       toast.error('Failed to save configuration');
@@ -280,7 +553,7 @@ export function WhatsAppConfig() {
   async function handleTestConnection() {
     try {
       setTesting(true);
-      const res = await fetch('/api/whatsapp/config', { method: 'GET' });
+      const res = await fetch(`/api/whatsapp/config?channel_id=${channelId}`, { method: 'GET' });
       const payload = await res.json();
 
       if (payload.connected) {
@@ -290,11 +563,17 @@ export function WhatsAppConfig() {
         toast.success(
           payload.phone_info?.verified_name
             ? `Connected to ${payload.phone_info.verified_name}`
-            : 'API connection successful'
+            : 'API connection successful',
         );
       } else {
         setConnectionStatus('disconnected');
-        setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+        setResetReason(
+          payload.needs_reset
+            ? 'token_corrupted'
+            : payload.reason === 'meta_api_error'
+              ? 'meta_api_error'
+              : null,
+        );
         setStatusMessage(payload.message || '');
         toast.error(payload.message || 'API connection failed');
       }
@@ -311,7 +590,7 @@ export function WhatsAppConfig() {
     setVerifyingRegistration(true);
     setRegistrationProbe(null);
     try {
-      const res = await fetch('/api/whatsapp/config/verify-registration', {
+      const res = await fetch(`/api/whatsapp/config/verify-registration?channel_id=${channelId}`, {
         method: 'GET',
       });
       const data = (await res.json()) as RegistrationProbe;
@@ -324,7 +603,7 @@ export function WhatsAppConfig() {
           { duration: 8000 },
         );
       }
-      if (accountId) await fetchConfig(accountId);
+      await fetchConfig();
     } catch (err) {
       console.error('verify-registration failed:', err);
       toast.error('Could not reach the verification endpoint.');
@@ -334,13 +613,15 @@ export function WhatsAppConfig() {
   }
 
   async function handleReset() {
-    if (!confirm('This will delete the current WhatsApp config so you can re-enter it. Continue?')) {
+    if (!confirm('This will clear this channel\'s credentials so you can re-enter them. Continue?')) {
       return;
     }
 
     try {
       setResetting(true);
-      const res = await fetch('/api/whatsapp/config', { method: 'DELETE' });
+      const res = await fetch(`/api/whatsapp/config?channel_id=${channelId}`, {
+        method: 'DELETE',
+      });
       const data = await res.json();
 
       if (!res.ok) {
@@ -349,15 +630,8 @@ export function WhatsAppConfig() {
       }
 
       toast.success('Configuration cleared. You can now re-enter your credentials.');
-      setConfig(null);
-      setPhoneNumberId('');
-      setWabaId('');
-      setAccessToken('');
-      setVerifyToken('');
-      setTokenEdited(false);
-      setConnectionStatus('disconnected');
-      setResetReason(null);
-      setStatusMessage('');
+      await fetchConfig();
+      onChanged();
     } catch (err) {
       console.error('Reset error:', err);
       toast.error('Failed to reset configuration');
@@ -373,27 +647,16 @@ export function WhatsAppConfig() {
 
   if (loading) {
     return (
-      <section className="animate-in fade-in-50 duration-200">
-        <SettingsPanelHead
-          title={t("title")}
-          description={t("description")}
-        />
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="size-6 animate-spin text-primary" />
-        </div>
-      </section>
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="size-6 animate-spin text-primary" />
+      </div>
     );
   }
 
   const showResetBanner = resetReason === 'token_corrupted';
 
   return (
-    <section className="animate-in fade-in-50 duration-200">
-      <SettingsPanelHead
-        title={t("title")}
-        description={t("description")}
-      />
-      <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+    <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
         {/* Corrupted-token reset banner */}
@@ -444,19 +707,12 @@ export function WhatsAppConfig() {
             </AlertTitle>
           </div>
           <AlertDescription className="text-muted-foreground">
-            {connectionStatus === 'connected'
-              ? t('connectedDesc')
-              : statusMessage ||
-                t('notConnectedDesc')}
+            {connectionStatus === 'connected' ? t('connectedDesc') : statusMessage || t('notConnectedDesc')}
           </AlertDescription>
         </Alert>
 
-        {/* Registration Status — the "is it actually live?" check.
-            Credentials being valid is necessary but not sufficient;
-            without a successful /register call the number won't
-            receive inbound events. Surface this dimension separately
-            so users don't trust a misleading green banner. */}
-        {config && (
+        {/* Registration Status */}
+        {hasCredentials && (
           <Alert
             className={
               isRegistered
@@ -471,14 +727,8 @@ export function WhatsAppConfig() {
                 ) : (
                   <AlertTriangle className="size-4 text-amber-400" />
                 )}
-                <AlertTitle
-                  className={
-                    'mb-0 ' + (isRegistered ? 'text-emerald-200' : 'text-amber-200')
-                  }
-                >
-                  {isRegistered
-                    ? t('registered')
-                    : t('notRegistered')}
+                <AlertTitle className={'mb-0 ' + (isRegistered ? 'text-emerald-200' : 'text-amber-200')}>
+                  {isRegistered ? t('registered') : t('notRegistered')}
                 </AlertTitle>
               </div>
               <Button
@@ -501,7 +751,7 @@ export function WhatsAppConfig() {
                 <span
                   dangerouslySetInnerHTML={{
                     __html: t('subscribedSince', {
-                      date: config.registered_at
+                      date: config?.registered_at
                         ? new Date(config.registered_at).toLocaleString()
                         : t('unknownDate'),
                     }),
@@ -510,10 +760,7 @@ export function WhatsAppConfig() {
               ) : lastRegistrationError ? (
                 <>
                   {t('lastAttemptFailed')}
-                  <span className="text-red-300">
-                    &quot;{lastRegistrationError}&quot;
-                  </span>
-                  . {t('retryHint')}
+                  <span className="text-red-300">&quot;{lastRegistrationError}&quot;</span>. {t('retryHint')}
                 </>
               ) : (
                 <>{t('noRegistrationHint')}</>
@@ -558,9 +805,7 @@ export function WhatsAppConfig() {
         <Card>
           <CardHeader>
             <CardTitle className="text-foreground">{t('apiCredentialsTitle')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('apiCredentialsDesc')}
-            </CardDescription>
+            <CardDescription className="text-muted-foreground">{t('apiCredentialsDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -610,10 +855,8 @@ export function WhatsAppConfig() {
                   {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </button>
               </div>
-              {config && !tokenEdited && (
-                <p className="text-xs text-muted-foreground">
-                  {t('tokenHidden')}
-                </p>
+              {hasCredentials && !tokenEdited && (
+                <p className="text-xs text-muted-foreground">{t('tokenHidden')}</p>
               )}
             </div>
 
@@ -625,9 +868,7 @@ export function WhatsAppConfig() {
                 onChange={(e) => setVerifyToken(e.target.value)}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
-              <p className="text-xs text-muted-foreground">
-                {t('webhookVerifyTokenHint')}
-              </p>
+              <p className="text-xs text-muted-foreground">{t('webhookVerifyTokenHint')}</p>
             </div>
 
             <div className="space-y-2">
@@ -641,9 +882,7 @@ export function WhatsAppConfig() {
                 maxLength={6}
                 placeholder={t('pinPlaceholder')}
                 value={pin}
-                onChange={(e) =>
-                  setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
-                }
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
               />
               <p className="text-xs text-muted-foreground leading-relaxed">
@@ -657,9 +896,7 @@ export function WhatsAppConfig() {
         <Card>
           <CardHeader>
             <CardTitle className="text-foreground">{t('webhookTitle')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('webhookDesc')}
-            </CardDescription>
+            <CardDescription className="text-muted-foreground">{t('webhookDesc')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -685,11 +922,7 @@ export function WhatsAppConfig() {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3">
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
+          <Button onClick={handleSave} disabled={saving} className="bg-primary hover:bg-primary/90 text-primary-foreground">
             {saving ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
@@ -702,7 +935,7 @@ export function WhatsAppConfig() {
           <Button
             variant="outline"
             onClick={handleTestConnection}
-            disabled={testing || !config}
+            disabled={testing || !hasCredentials}
             className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
           >
             {testing ? (
@@ -717,7 +950,7 @@ export function WhatsAppConfig() {
               </>
             )}
           </Button>
-          {config && (
+          {hasCredentials && (
             <Button
               variant="outline"
               onClick={handleReset}
@@ -745,9 +978,7 @@ export function WhatsAppConfig() {
         <Card>
           <CardHeader>
             <CardTitle className="text-foreground text-base">{t('setupInstructions')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('setupInstructionsDesc')}
-            </CardDescription>
+            <CardDescription className="text-muted-foreground">{t('setupInstructionsDesc')}</CardDescription>
           </CardHeader>
           <CardContent>
             <Accordion>
@@ -835,6 +1066,5 @@ export function WhatsAppConfig() {
         </Card>
       </div>
     </div>
-    </section>
   );
 }

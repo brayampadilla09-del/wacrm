@@ -21,6 +21,7 @@ import {
 
 import { useTranslations } from "next-intl";
 import { useCan } from "@/hooks/use-can";
+import { useChannel } from "@/hooks/use-channel";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
@@ -87,6 +88,7 @@ const TEMPLATE_ICONS = {
 export default function FlowsPage() {
   const router = useRouter();
   const canCreate = useCan("send-messages");
+  const { currentChannelId: channelId } = useChannel();
   const t = useTranslations("Flows.list");
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,11 +98,16 @@ export default function FlowsPage() {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
 
   useEffect(() => {
+    if (!channelId) {
+      setFlows([]);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
         const [flowsRes, tmplRes] = await Promise.all([
-          fetch("/api/flows"),
+          fetch(`/api/flows?channel_id=${channelId}`),
           fetch("/api/flows/templates"),
         ]);
         if (!flowsRes.ok) {
@@ -128,7 +135,7 @@ export default function FlowsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [channelId]);
 
   async function handleCreate() {
     if (!newName.trim()) return;
@@ -141,6 +148,7 @@ export default function FlowsPage() {
           name: newName.trim(),
           trigger_type: "keyword",
           trigger_config: { keywords: [] },
+          channel_id: channelId,
         }),
       });
       if (!res.ok) throw new Error(`Create failed: ${res.status}`);
@@ -162,7 +170,7 @@ export default function FlowsPage() {
       const res = await fetch("/api/flows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_slug: slug }),
+        body: JSON.stringify({ template_slug: slug, channel_id: channelId }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));

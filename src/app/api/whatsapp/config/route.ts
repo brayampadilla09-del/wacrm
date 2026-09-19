@@ -48,11 +48,16 @@ function supabaseAdmin() {
 }
 
 /**
- * GET /api/whatsapp/config
+ * GET /api/whatsapp/config?channel_id=<id>
  *
  * Used by the "Test API Connection" button and by the page to check
- * whether the saved config is healthy. Returns 200 in all non-auth cases
+ * whether a saved channel is healthy. Returns 200 in all non-auth cases
  * so the UI can render an appropriate message rather than show a 500.
+ *
+ * `channel_id` selects which whatsapp_config row to check (migration
+ * 039 — an account can have more than one). Omit it to check the
+ * account's default channel (back-compat with pre-multi-channel
+ * callers).
  *
  * Response shape:
  *   { connected: true,  phone_info: {...} }
@@ -60,7 +65,7 @@ function supabaseAdmin() {
  *   { connected: false, reason: 'token_corrupted',  message: '...', needs_reset: true }
  *   { connected: false, reason: 'meta_api_error',   message: '...' }
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -85,11 +90,15 @@ export async function GET() {
       )
     }
 
-    const { data: config, error: configError } = await supabase
+    const channelId = new URL(request.url).searchParams.get('channel_id')
+    let configQuery = supabase
       .from('whatsapp_config')
       .select('phone_number_id, access_token, status')
       .eq('account_id', accountId)
-      .maybeSingle()
+    configQuery = channelId
+      ? configQuery.eq('id', channelId)
+      : configQuery.eq('is_default', true)
+    const { data: config, error: configError } = await configQuery.maybeSingle()
 
     if (configError) {
       console.error('Error fetching whatsapp_config:', configError)
@@ -99,7 +108,10 @@ export async function GET() {
       )
     }
 
-    if (!config) {
+    // No row (channel never created) or a reset/never-connected channel
+    // (phone_number_id/access_token nulled by DELETE, migration 040) —
+    // both mean the same thing to the caller: nothing to check yet.
+    if (!config || !config.access_token || !config.phone_number_id) {
       return NextResponse.json(
         {
           connected: false,
@@ -160,8 +172,11 @@ export async function GET() {
 /**
  * POST /api/whatsapp/config
  *
- * Saves or updates the WhatsApp config for the authenticated user.
- * Verifies credentials with Meta first, then encrypts and stores.
+ * Saves or updates a WhatsApp channel for the authenticated user's
+ * account. Verifies credentials with Meta first, then encrypts and
+ * stores. Pass `channel_id` to update an existing channel; omit it to
+ * create a new one (in which case `label` is required — e.g. "Asesor"
+ * for a second, human-operated number; migration 039).
  */
 export async function POST(request: Request) {
   try {
@@ -185,11 +200,30 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const {
+      channel_id,
+      phone_number_id,
+      waba_id,
+      access_token,
+      verify_token,
+      pin,
+    } = body
+    // Only meaningful (and required) when creating a new channel — an
+    // update to an existing channel keeps its current label/kind, which
+    // are edited separately via the channel list, not this save form.
+    const label: string | undefined = body.label
+    const kind: 'bot' | 'human' | undefined = body.kind
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
         { error: 'access_token and phone_number_id are required' },
+        { status: 400 }
+      )
+    }
+
+    if (!channel_id && !label?.trim()) {
+      return NextResponse.json(
+        { error: "'label' is required when adding a new channel" },
         { status: 400 }
       )
     }
@@ -269,14 +303,26 @@ export async function POST(request: Request) {
       )
     }
 
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
-      .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
+    // Look up the target row (the channel being edited, if any) so we
+    // know whether this number is already registered with Meta — if so
+    // we can skip /register when the user didn't provide a PIN this
+    // time around. No channel_id means "create a new channel" (there
+    // is deliberately no existing row to find).
+    const { data: existing } = channel_id
+      ? await supabase
+          .from('whatsapp_config')
+          .select('id, registered_at, phone_number_id')
+          .eq('account_id', accountId)
+          .eq('id', channel_id)
+          .maybeSingle()
+      : { data: null }
+
+    if (channel_id && !existing) {
+      return NextResponse.json(
+        { error: 'Channel not found' },
+        { status: 404 }
+      )
+    }
 
     const sameNumber =
       existing?.phone_number_id === phone_number_id &&
@@ -366,11 +412,13 @@ export async function POST(request: Request) {
       updated_at: new Date().toISOString(),
     }
 
+    let savedChannelId: string
     if (existing) {
       const { error: updateError } = await supabase
         .from('whatsapp_config')
         .update(baseRow)
         .eq('account_id', accountId)
+        .eq('id', existing.id)
 
       if (updateError) {
         console.error('Error updating whatsapp_config:', updateError)
@@ -379,26 +427,34 @@ export async function POST(request: Request) {
           { status: 500 }
         )
       }
+      savedChannelId = existing.id
     } else {
-      // Insert with both columns: `account_id` is the tenancy key
-      // (NOT NULL post-017, UNIQUE so duplicates trip the constraint
-      // up-front), `user_id` is the audit column identifying which
-      // member of the account saved the config.
-      const { error: insertError } = await supabase
+      // Creating a new channel (migration 039). `account_id` is the
+      // tenancy key, `user_id` is the audit column identifying which
+      // member of the account saved it. `is_default` stays false — the
+      // account's original channel keeps that flag; users switch the
+      // default explicitly from the channel list if they ever want to.
+      const { data: inserted, error: insertError } = await supabase
         .from('whatsapp_config')
         .insert({
           account_id: accountId,
           user_id: user.id,
+          label: label!.trim(),
+          kind: kind === 'human' ? 'human' : 'bot',
+          is_default: false,
           ...baseRow,
         })
+        .select('id')
+        .single()
 
-      if (insertError) {
+      if (insertError || !inserted) {
         console.error('Error inserting whatsapp_config:', insertError)
         return NextResponse.json(
           { error: 'Failed to save configuration' },
           { status: 500 }
         )
       }
+      savedChannelId = inserted.id
     }
 
     if (registrationError) {
@@ -408,6 +464,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: false,
         saved: true,
+        channel_id: savedChannelId,
         registered: false,
         registration_error: registrationError,
         phone_info: phoneInfo,
@@ -417,6 +474,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       saved: true,
+      channel_id: savedChannelId,
       registered: registeredAt != null,
       // Credentials are valid and saved, but inbound webhook
       // registration was skipped because no PIN was supplied (e.g. a
@@ -432,13 +490,22 @@ export async function POST(request: Request) {
 }
 
 /**
- * DELETE /api/whatsapp/config
+ * DELETE /api/whatsapp/config?channel_id=<id>
  *
- * Removes the authenticated user's WhatsApp configuration row.
  * Used by the "Reset Configuration" button to recover from a corrupted
  * encrypted token (mismatched ENCRYPTION_KEY across environments).
+ *
+ * Clears the channel's credentials in place rather than deleting the
+ * row (migration 039 made `channel_id` a NOT NULL, ON DELETE RESTRICT
+ * FK from contacts/conversations/etc. — once a channel has any
+ * traffic, hard-deleting it would fail with a foreign-key violation
+ * anyway). The channel keeps its id/label/kind so the UI card stays in
+ * place; the user re-enters credentials to reconnect it.
+ *
+ * `channel_id` selects which channel to reset. Omit it to reset the
+ * account's default channel (back-compat with pre-multi-channel callers).
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -459,15 +526,34 @@ export async function DELETE() {
       )
     }
 
-    const { error: deleteError } = await supabase
+    const channelId = new URL(request.url).searchParams.get('channel_id')
+    let resetQuery = supabase
       .from('whatsapp_config')
-      .delete()
+      .update({
+        // Nullable since migration 040 — lets any number of channels
+        // sit disconnected at once without a placeholder value racing
+        // the phone_number_id UNIQUE constraint (013).
+        phone_number_id: null,
+        waba_id: null,
+        access_token: null,
+        verify_token: null,
+        status: 'disconnected',
+        connected_at: null,
+        registered_at: null,
+        subscribed_apps_at: null,
+        last_registration_error: null,
+        updated_at: new Date().toISOString(),
+      })
       .eq('account_id', accountId)
+    resetQuery = channelId
+      ? resetQuery.eq('id', channelId)
+      : resetQuery.eq('is_default', true)
+    const { error: resetError } = await resetQuery
 
-    if (deleteError) {
-      console.error('Error deleting whatsapp_config:', deleteError)
+    if (resetError) {
+      console.error('Error resetting whatsapp_config:', resetError)
       return NextResponse.json(
-        { error: 'Failed to delete configuration' },
+        { error: 'Failed to reset configuration' },
         { status: 500 }
       )
     }

@@ -59,6 +59,7 @@ const SAMPLE_CONTACT: Contact = {
   id: 'sample',
   user_id: '',
   account_id: '',
+  channel_id: '',
   name: 'John Doe',
   phone: '+1234567890',
   email: 'john@example.com',

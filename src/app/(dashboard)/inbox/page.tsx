@@ -10,6 +10,7 @@ import {
 } from "@/lib/inbox/conversations";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
+import { useChannel } from "@/hooks/use-channel";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
@@ -42,6 +43,11 @@ function InboxPageInner() {
    * automatically instead of showing the empty center panel.
    */
   const deepLinkConvId = searchParams.get("c");
+
+  // Which WhatsApp number's inbox is currently showing (migration 039).
+  // Every fetch/realtime handler below is scoped to this so switching
+  // channels never mixes the two numbers' conversations together.
+  const { currentChannelId: channelId } = useChannel();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] =
@@ -96,6 +102,21 @@ function InboxPageInner() {
   // elsewhere.
   const autoSelectedForDeepLinkRef = useRef<string | null>(null);
 
+  // Switching channels closes whatever thread was open — it belongs to
+  // the channel we just left. ConversationList refetches its own list
+  // independently (it's keyed on `channelId` too).
+  const prevChannelIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevChannelIdRef.current !== null && prevChannelIdRef.current !== channelId) {
+      setActiveConversation(null);
+      setActiveContact(null);
+      setMessages([]);
+      autoSelectedForDeepLinkRef.current = null;
+      router.replace("/inbox", { scroll: false });
+    }
+    prevChannelIdRef.current = channelId;
+  }, [channelId, router]);
+
   // Tracks conversations whose hydrate fetch is currently in flight. The
   // conv-INSERT and the first-message-INSERT events both call into
   // hydrateConversation; the dedupe here keeps it at one refetch per
@@ -130,13 +151,19 @@ function InboxPageInner() {
   // this whenever they reference a conversation id they don't recognise.
   const hydrateConversation = useCallback(async (convId: string) => {
     if (hydratingConvIdsRef.current.has(convId)) return;
+    if (!channelId) return;
     hydratingConvIdsRef.current.add(convId);
     try {
       const supabase = createClient();
+      // Scoped to the channel currently showing (migration 039) — a
+      // realtime event for the OTHER channel's conversation resolves to
+      // no row here and is silently dropped instead of leaking into
+      // this inbox view.
       const { data, error } = await supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
         .eq("id", convId)
+        .eq("channel_id", channelId)
         .maybeSingle();
       if (error) {
         // Supabase errors have non-enumerable properties — log fields
@@ -170,47 +197,27 @@ function InboxPageInner() {
     } finally {
       hydratingConvIdsRef.current.delete(convId);
     }
-  }, []);
+  }, [channelId]);
 
-  // Check WhatsApp connection status on mount
+  // Check WhatsApp connection status of the currently-selected channel.
   useEffect(() => {
+    if (!channelId) {
+      setWhatsappConnected(null);
+      return;
+    }
     const checkConnection = async () => {
       const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-
-      if (!user) return;
-
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("account_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const accountId = profile?.account_id as string | undefined;
-      if (!accountId) {
-        setWhatsappConnected(false);
-        return;
-      }
-
       const { data } = await supabase
         .from("whatsapp_config")
         .select("status")
-        .eq("account_id", accountId)
+        .eq("id", channelId)
         .maybeSingle();
 
       setWhatsappConnected(data?.status === "connected");
     };
 
     checkConnection();
-  }, []);
+  }, [channelId]);
 
   // Handle realtime message events
   const handleMessageEvent = useCallback(
@@ -284,6 +291,12 @@ function InboxPageInner() {
     }) => {
       const conv = event.new;
 
+      // Realtime is subscribed account-wide, not per-channel — ignore
+      // rows from whichever channel isn't currently showing (migration
+      // 039) so switching between Bimi/Asesor never mixes their
+      // conversations together.
+      if (conv.channel_id && conv.channel_id !== channelId) return;
+
       if (event.eventType === "INSERT") {
         // Prepend immediately for snappy UX so the new conv shows in the
         // list right away, then hydrate to fill in the `contact` join
@@ -334,7 +347,7 @@ function InboxPageInner() {
         }
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, channelId]
   );
 
   // Subscribe to realtime. The `isConnected` flag below feeds the
@@ -609,6 +622,7 @@ function InboxPageInner() {
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
             resyncToken={resyncToken}
+            channelId={channelId}
           />
         </div>
 

@@ -38,7 +38,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "selectChannel": "Select channel"
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -1493,7 +1494,22 @@
       "step4_3": "Paste the <strong class=\"text-foreground\">Webhook Callback URL</strong> from above",
       "step4_4": "Enter the same <strong class=\"text-foreground\">Verify Token</strong> you set here",
       "step4_5": "Subscribe to \"messages\" webhook field",
-      "metaDocs": "Meta WhatsApp API Documentation"
+      "metaDocs": "Meta WhatsApp API Documentation",
+      "addChannel": "Add number",
+      "addChannelTitle": "Add a WhatsApp number",
+      "addChannelDesc": "Connect a second number as an independent channel — its own inbox, contacts, and automations, separate from your other numbers.",
+      "newChannelLabelField": "Channel name",
+      "newChannelLabelPlaceholder": "e.g. Asesor",
+      "newChannelKindField": "Channel type",
+      "newChannelKindBot": "Bot (automated)",
+      "newChannelKindBotDesc": "Runs flows, automations, and AI auto-reply — for your main public number.",
+      "newChannelKindHuman": "Human (manual)",
+      "newChannelKindHumanDesc": "Plain inbox only — no flows, automations, or AI. For a person answering by hand.",
+      "createChannel": "Add channel",
+      "creatingChannel": "Adding...",
+      "defaultBadge": "Default",
+      "botBadge": "Bot",
+      "humanBadge": "Human"
     },
     "sections": {
       "overview": "Overview",

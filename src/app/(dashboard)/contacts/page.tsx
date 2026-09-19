@@ -56,6 +56,7 @@ import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
+import { useChannel } from '@/hooks/use-channel';
 import { useTranslations } from 'next-intl';
 
 const PAGE_SIZE = 25;
@@ -69,6 +70,7 @@ export default function ContactsPage() {
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
+  const { currentChannelId: channelId } = useChannel();
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +121,15 @@ export default function ContactsPage() {
   }, [supabase]);
 
   const fetchContacts = useCallback(async () => {
+    // No channel resolved yet — skip rather than showing every
+    // channel's contacts mixed together (migration 039).
+    if (!channelId) {
+      setContacts([]);
+      setTotalCount(0);
+      setLoading(false);
+      return;
+    }
+
     const seq = ++fetchSeq.current;
     setLoading(true);
     // The visible rows are about to change — drop any selection that
@@ -137,12 +148,14 @@ export default function ContactsPage() {
       // Tag filter active — resolve it server-side (join + distinct +
       // windowed total count + pagination) so a tag covering many
       // contacts can't silently truncate the result or overflow an IN
-      // clause. See migration 025_filter_contacts_by_tags.
+      // clause. See migration 025_filter_contacts_by_tags (channel
+      // scoping added in 041).
       const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
         p_tag_ids: selectedTagIds,
         p_search: term || null,
         p_limit: PAGE_SIZE,
         p_offset: from,
+        p_channel_id: channelId,
       });
       if (seq !== fetchSeq.current) return; // superseded by a newer fetch
       if (error) {
@@ -157,6 +170,7 @@ export default function ContactsPage() {
       let query = supabase
         .from('contacts')
         .select('*', { count: 'exact' })
+        .eq('channel_id', channelId)
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -207,7 +221,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+  }, [supabase, page, search, selectedTagIds, tagsMap, t, channelId]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -217,6 +231,14 @@ export default function ContactsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTags();
   }, [fetchTags]);
+
+  // Switching channels invalidates the current page — the other
+  // channel's contact count is unrelated, so stay on page 0 rather
+  // than risk an out-of-range page silently returning nothing.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPage(0);
+  }, [channelId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect

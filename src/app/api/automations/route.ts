@@ -8,6 +8,7 @@ import {
   validateStepsForActivation,
   validateTriggerForActivation,
 } from '@/lib/automations/validate'
+import { resolveDefaultChannelId } from '@/lib/whatsapp/channels'
 
 export async function GET() {
   const supabase = await createClient()
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
 
-  const { name, description, trigger_type, trigger_config, is_active, steps, template } = body
+  const { name, description, trigger_type, trigger_config, is_active, steps, template, channel_id } = body
 
   let effectiveSteps: BuilderStepInput[] | undefined = steps
   let effectiveName = name
@@ -105,11 +106,37 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  // Trust the client-selected channel only if it's actually one of this
+  // account's channels; otherwise fall back to the default (covers
+  // callers that predate the channel switcher, and rejects a forged
+  // channel_id from another account).
+  let channelId: string | null = null
+  if (channel_id) {
+    const { data: ownedChannel } = await admin
+      .from('whatsapp_config')
+      .select('id')
+      .eq('id', channel_id)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    channelId = ownedChannel?.id ?? null
+  }
+  if (!channelId) {
+    channelId = await resolveDefaultChannelId(admin, accountId)
+  }
+  if (!channelId) {
+    return NextResponse.json(
+      { error: 'WhatsApp not configured for this account.' },
+      { status: 400 },
+    )
+  }
+
   const { data: automation, error: insertErr } = await admin
     .from('automations')
     .insert({
       user_id: user.id,
       account_id: accountId,
+      channel_id: channelId,
       name: effectiveName,
       description: effectiveDescription ?? null,
       trigger_type: effectiveTriggerType,

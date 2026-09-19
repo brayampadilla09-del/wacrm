@@ -101,9 +101,23 @@ export default function NewBroadcastPage() {
       return;
     }
 
+    // No channel switcher in this UI yet (migration 039) — targets the
+    // account's default channel, same as every broadcast before it.
+    const { data: defaultChannel } = await supabase
+      .from('whatsapp_config')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('is_default', true)
+      .maybeSingle();
+    if (!defaultChannel) {
+      toast.error(t('toastNotLinked'));
+      return;
+    }
+
     const { error } = await supabase.from('broadcasts').insert({
       user_id: user.id,
       account_id: accountId,
+      channel_id: defaultChannel.id,
       name: name.trim(),
       template_name: template.name,
       template_language: template.language ?? 'en_US',

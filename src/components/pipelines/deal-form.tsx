@@ -195,9 +195,25 @@ export function DealForm({
         setSaving(false);
         return;
       }
-      const { error } = await supabase
-        .from("deals")
-        .insert({ ...payload, user_id: user.id, account_id: accountId, status: "open" });
+      // Deals are denormalized onto their contact's channel (migration
+      // 039) so the Deals page can filter by channel without a join.
+      const { data: contactRow } = await supabase
+        .from("contacts")
+        .select("channel_id")
+        .eq("id", contactId)
+        .maybeSingle();
+      if (!contactRow) {
+        toast.error(t("toastFailedCreate"));
+        setSaving(false);
+        return;
+      }
+      const { error } = await supabase.from("deals").insert({
+        ...payload,
+        user_id: user.id,
+        account_id: accountId,
+        channel_id: contactRow.channel_id,
+        status: "open",
+      });
       if (error) {
         toast.error(t("toastFailedCreate"));
         setSaving(false);

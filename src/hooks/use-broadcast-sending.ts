@@ -233,6 +233,18 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       throw new Error('Your profile is not linked to an account.');
     }
 
+    // No channel switcher in this broadcast flow yet (migration 039) —
+    // CSV-created contacts land on the account's default channel.
+    const { data: defaultChannel } = await supabase
+      .from('whatsapp_config')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('is_default', true)
+      .maybeSingle();
+    if (!defaultChannel) {
+      throw new Error('WhatsApp not configured for this account.');
+    }
+
     // De-duplicate by phone within the CSV (users can paste duplicates).
     const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
     for (const row of csvRows) {
@@ -262,6 +274,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       .map((phone) => ({
         user_id: user.id,
         account_id: accountId,
+        channel_id: defaultChannel.id,
         phone,
         name: uniqueByPhone.get(phone)?.name ?? null,
       }));
@@ -351,6 +364,18 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         throw new Error('No contacts found for this audience.');
       }
 
+      // No channel switcher in this broadcast flow yet (migration 039) —
+      // sends go out on the account's default channel.
+      const { data: sendChannel } = await supabase
+        .from('whatsapp_config')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('is_default', true)
+        .maybeSingle();
+      if (!sendChannel) {
+        throw new Error('WhatsApp not configured for this account.');
+      }
+
       // ── Step 2: Create broadcast row ──────────────────────────────
       setProgress(10);
       const { data: broadcast, error: broadcastError } = await supabase
@@ -358,6 +383,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .insert({
           user_id: user.id,
           account_id: accountId,
+          channel_id: sendChannel.id,
           name: payload.name,
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',

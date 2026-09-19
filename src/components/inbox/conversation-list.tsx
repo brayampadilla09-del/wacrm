@@ -34,6 +34,10 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  /** Which WhatsApp channel's conversations to show (migration 039).
+   *  Null means "no channel resolved yet" — the fetch is skipped rather
+   *  than showing every channel's conversations mixed together. */
+  channelId: string | null;
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
@@ -52,6 +56,7 @@ export function ConversationList({
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  channelId,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
   
@@ -95,9 +100,19 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
+      // No channel resolved yet (still loading, or the account has none
+      // configured) — skip the fetch rather than showing every channel's
+      // conversations mixed together.
+      if (!channelId) {
+        onConversationsLoadedRef.current([]);
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
+        .eq("channel_id", channelId)
         .order("last_message_at", { ascending: false });
 
       if (cancelled) return;
@@ -124,7 +139,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+  }, [resyncToken, channelId]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.

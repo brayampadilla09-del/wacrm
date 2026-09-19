@@ -301,6 +301,8 @@ export interface FlowRow {
   /** Account tenancy (NOT NULL post-017). The engine looks up active
    *  flows for inbound dispatch using this field. */
   account_id: string;
+  /** Which WhatsApp number this flow runs on (NOT NULL post-039). */
+  channel_id: string;
   /** Author. Used as a default sender-of-record on engine sends and
    *  preserved on flow_runs for log/audit display. */
   user_id: string;
@@ -333,6 +335,9 @@ export interface FlowRunRow {
   flow_id: string;
   /** Tenancy. Matches flows.account_id; NOT NULL post-017. */
   account_id: string;
+  /** Which WhatsApp number this run is on. Matches flows.channel_id;
+   *  NOT NULL post-039. */
+  channel_id: string;
   /** Audit. Matches the parent flow.user_id. */
   user_id: string;
   contact_id: string | null;
@@ -406,6 +411,11 @@ export interface DispatchInboundInput {
   /** Account tenancy key. Drives the lookup of active flows and the
    *  idempotency check for previously-seen inbound message_ids. */
   accountId: string;
+  /** Which WhatsApp number this arrived on (migration 039). Scopes
+   *  which flows can auto-start — an account's two numbers run fully
+   *  independent flows (Bimi's booking flow must never fire on the
+   *  advisor's personal number). */
+  channelId: string;
   /** Sender-of-record for the bot's outbound prompts on engine
    *  sends. Set by the webhook to the WhatsApp config owner. */
   userId: string;

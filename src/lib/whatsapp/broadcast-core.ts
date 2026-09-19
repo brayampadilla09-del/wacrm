@@ -29,6 +29,7 @@ import {
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import { resolveChannelConfig } from '@/lib/whatsapp/channels';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -111,11 +112,9 @@ export async function createBroadcast(
 
   // Config (fail fast + provides the audit trail owner already resolved
   // by the caller). Meta send needs phone_number_id + decrypted token.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
+  // No channel selector on the public API yet (migration 039) — targets
+  // the account's default channel, matching pre-039 behavior.
+  const { data: config, error: configError } = await resolveChannelConfig(db, accountId);
   if (configError || !config) {
     throw new BroadcastError(
       'whatsapp_not_configured',
@@ -197,6 +196,7 @@ export async function createBroadcast(
     .from('broadcasts')
     .insert({
       account_id: accountId,
+      channel_id: config.id,
       user_id: auditUserId,
       name: name || `API broadcast (${templateName})`,
       template_name: templateName,

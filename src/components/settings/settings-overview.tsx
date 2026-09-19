@@ -120,17 +120,22 @@ export function SettingsOverview({
     // WhatsApp connection status — slower, independent.
     (async () => {
       setWhatsappLoading(true);
-      const [row, health] = await Promise.allSettled([
+      // An account can have more than one channel (migration 039) —
+      // "configured" means at least one of them has credentials. The
+      // health check still only probes the default channel; a per-
+      // channel breakdown lives on the WhatsApp settings page itself.
+      const [rows, health] = await Promise.allSettled([
         supabase
           .from('whatsapp_config')
           .select('phone_number_id')
-          .eq('account_id', acctId)
-          .maybeSingle(),
+          .eq('account_id', acctId),
         fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) => r.json()),
       ]);
       if (cancelled) return;
       setWhatsapp({
-        configured: row.status === 'fulfilled' && !!row.value.data?.phone_number_id,
+        configured:
+          rows.status === 'fulfilled' &&
+          !!rows.value.data?.some((r) => r.phone_number_id),
         connected: health.status === 'fulfilled' && !!health.value?.connected,
       });
       setWhatsappLoading(false);

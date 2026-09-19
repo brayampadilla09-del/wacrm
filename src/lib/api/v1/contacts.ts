@@ -13,6 +13,7 @@ import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
+import { resolveDefaultChannelId } from '@/lib/whatsapp/channels';
 
 /** Row select that embeds the contact's tags for serialization. */
 export const CONTACT_SELECT = '*, contact_tags(tags(*))';
@@ -74,10 +75,14 @@ export async function resolveAuditUserId(
   db: SupabaseClient,
   accountId: string
 ): Promise<string> {
+  // Default channel only (migration 039 — an account can have more than
+  // one whatsapp_config row now; the public API has no channel selector
+  // yet, so it keeps attributing to the account's default number).
   const { data: config } = await db
     .from('whatsapp_config')
     .select('user_id')
     .eq('account_id', accountId)
+    .eq('is_default', true)
     .maybeSingle();
   const configOwner = config?.user_id as string | undefined;
   if (configOwner) return configOwner;
@@ -121,13 +126,21 @@ export async function findOrCreateContact(
     );
   }
 
-  const existing = await findExistingContact(db, accountId, sanitized);
+  // No channel selector on the public API yet (migration 039) — targets
+  // the account's default channel, matching pre-039 behavior.
+  const channelId = await resolveDefaultChannelId(db, accountId);
+  if (!channelId) {
+    throw new ContactError('WhatsApp not configured for this account', 400);
+  }
+
+  const existing = await findExistingContact(db, accountId, sanitized, channelId);
   if (existing) return { id: existing.id, created: false };
 
   const { data: created, error } = await db
     .from('contacts')
     .insert({
       account_id: accountId,
+      channel_id: channelId,
       user_id: auditUserId,
       phone: sanitized,
       name: input.name ?? sanitized,
@@ -141,7 +154,7 @@ export async function findOrCreateContact(
     // Lost a race against a concurrent create — the unique index
     // rejected the duplicate. Re-resolve to the winner.
     if (isUniqueViolation(error)) {
-      const raced = await findExistingContact(db, accountId, sanitized);
+      const raced = await findExistingContact(db, accountId, sanitized, channelId);
       if (raced) return { id: raced.id, created: false };
     }
     console.error('[api/v1/contacts] create error:', error);

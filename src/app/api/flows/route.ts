@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { getFlowTemplate } from '@/lib/flows/templates'
+import { resolveDefaultChannelId } from '@/lib/whatsapp/channels'
 
 /**
  * GET /api/flows — list the caller's flows.
@@ -28,17 +29,21 @@ async function requireUser(): Promise<
   return { ok: true, userId: user.id, supabase }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireUser()
   if (!guard.ok) {
     return NextResponse.json(guard.body, { status: guard.status })
   }
   const { supabase } = guard
 
-  const { data, error } = await supabase
-    .from('flows')
-    .select('*')
-    .order('created_at', { ascending: false })
+  // `channel_id` scopes the list to one WhatsApp number (migration
+  // 039) — RLS already limits this to the caller's account, so an
+  // unfiltered request (no channel switcher yet) keeps its old
+  // behavior of returning every channel's flows.
+  const channelId = new URL(request.url).searchParams.get('channel_id')
+  let query = supabase.from('flows').select('*').order('created_at', { ascending: false })
+  if (channelId) query = query.eq('channel_id', channelId)
+  const { data, error } = await query
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
@@ -90,6 +95,9 @@ export async function POST(request: Request) {
          * provided.
          */
         template_slug?: string
+        /** Client-selected channel (migration 039) — validated against
+         *  the caller's account below before use. */
+        channel_id?: string
       }
     | null
   if (!body) {
@@ -97,6 +105,30 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  // Trust the client-selected channel only if it's actually one of this
+  // account's channels; otherwise fall back to the default (covers
+  // callers that predate the channel switcher, and rejects a forged
+  // channel_id from another account).
+  let channelId: string | null = null
+  if (body.channel_id) {
+    const { data: ownedChannel } = await admin
+      .from('whatsapp_config')
+      .select('id')
+      .eq('id', body.channel_id)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    channelId = ownedChannel?.id ?? null
+  }
+  if (!channelId) {
+    channelId = await resolveDefaultChannelId(admin, accountId)
+  }
+  if (!channelId) {
+    return NextResponse.json(
+      { error: 'WhatsApp not configured for this account.' },
+      { status: 400 },
+    )
+  }
 
   // -------- Template clone path --------
   if (body.template_slug) {
@@ -112,6 +144,7 @@ export async function POST(request: Request) {
       .insert({
         user_id: userId,
         account_id: accountId,
+        channel_id: channelId,
         name: body.name?.trim() || template.name,
         description: template.description,
         status: 'draft',
@@ -161,6 +194,7 @@ export async function POST(request: Request) {
     .insert({
       user_id: userId,
       account_id: accountId,
+      channel_id: channelId,
       name: body.name.trim(),
       description: body.description ?? null,
       status: 'draft',

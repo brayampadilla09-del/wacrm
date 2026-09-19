@@ -24,6 +24,7 @@ import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 import { SendMessageError } from '@/lib/whatsapp/send-message';
 import { resolveAuditUserId, ContactError } from '@/lib/api/v1/contacts';
+import { resolveDefaultChannelId } from '@/lib/whatsapp/channels';
 
 export interface ResolvedConversation {
   conversationId: string;
@@ -54,13 +55,12 @@ export async function resolveConversationByPhone(
   }
 
   // Fail fast (and create nothing) when the account has no WhatsApp
-  // connected — the same error the send would raise anyway.
-  const { data: config } = await db
-    .from('whatsapp_config')
-    .select('id')
-    .eq('account_id', accountId)
-    .maybeSingle();
-  if (!config) {
+  // connected — the same error the send would raise anyway. The public
+  // API has no channel selector yet, so it always targets the account's
+  // default channel (migration 039) — same behavior as before an
+  // account ever had a second number.
+  const channelId = await resolveDefaultChannelId(db, accountId);
+  if (!channelId) {
     throw new SendMessageError(
       'whatsapp_not_configured',
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
@@ -88,7 +88,7 @@ export async function resolveConversationByPhone(
   let contactId: string;
   let contactCreated = false;
 
-  const existing = await findExistingContact(db, accountId, sanitized);
+  const existing = await findExistingContact(db, accountId, sanitized, channelId);
   if (existing) {
     contactId = existing.id;
     if (name && name !== existing.name) {
@@ -102,6 +102,7 @@ export async function resolveConversationByPhone(
       .from('contacts')
       .insert({
         account_id: accountId,
+        channel_id: channelId,
         user_id: ownerUserId,
         phone: sanitized,
         name: name || sanitized,
@@ -111,9 +112,9 @@ export async function resolveConversationByPhone(
 
     if (createErr || !created) {
       // Lost a race against a concurrent inbound/API create — the
-      // unique index (migration 022) rejected the duplicate. Re-resolve.
+      // unique index (migration 022/039) rejected the duplicate. Re-resolve.
       if (isUniqueViolation(createErr)) {
-        const raced = await findExistingContact(db, accountId, sanitized);
+        const raced = await findExistingContact(db, accountId, sanitized, channelId);
         if (raced) {
           contactId = raced.id;
         } else {
@@ -145,6 +146,7 @@ export async function resolveConversationByPhone(
   const conversationId = await findOrCreateConversationRow(
     db,
     accountId,
+    channelId,
     contactId,
     ownerUserId
   );
@@ -161,6 +163,7 @@ export async function resolveConversationByPhone(
 async function findOrCreateConversationRow(
   db: SupabaseClient,
   accountId: string,
+  channelId: string,
   contactId: string,
   ownerUserId: string
 ): Promise<string> {
@@ -185,6 +188,7 @@ async function findOrCreateConversationRow(
     .from('conversations')
     .insert({
       account_id: accountId,
+      channel_id: channelId,
       user_id: ownerUserId,
       contact_id: contactId,
     })

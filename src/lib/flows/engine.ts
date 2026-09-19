@@ -531,6 +531,7 @@ async function isDuplicateInbound(
 async function findEntryFlow(
   db: AdminClient,
   accountId: string,
+  channelId: string,
   message: ParsedInbound,
   isFirstInbound: boolean,
 ): Promise<FlowRow | null> {
@@ -538,13 +539,15 @@ async function findEntryFlow(
   // are responses to existing prompts; they never start a new flow.
   if (message.kind !== "text") return null;
 
-  // Pull all active flows for this account. Active set is bounded
+  // Pull all active flows for this account+channel (migration 039 — an
+  // account's two numbers run independent flows). Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
   // makes the lookup index-supported).
   const { data: flows, error } = await db
     .from("flows")
     .select("*")
     .eq("account_id", accountId)
+    .eq("channel_id", channelId)
     .eq("status", "active")
     .order("created_at", { ascending: true });
   if (error || !flows) return null;
@@ -1342,6 +1345,7 @@ export async function dispatchInboundToFlows(
     const flow = await findEntryFlow(
       db,
       input.accountId,
+      input.channelId,
       input.message,
       input.isFirstInboundMessage,
     );
@@ -1620,7 +1624,7 @@ async function handleReplyForActiveRun(
   // siempre refresca — así que no hace falta una columna ni consulta nueva.
   const runAgeMs = Date.now() - new Date(run.started_at).getTime();
   if (message.kind === "text" && isButtonNode && runAgeMs >= RESTART_COOLDOWN_MS) {
-    const restartFlow = await findEntryFlow(db, run.account_id, message, false);
+    const restartFlow = await findEntryFlow(db, run.account_id, run.channel_id, message, false);
     if (restartFlow?.entry_node_id) {
       await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
         action: "restarted_by_keyword",
@@ -1633,6 +1637,7 @@ async function handleReplyForActiveRun(
         restartFlow,
         {
           accountId: run.account_id,
+          channelId: run.channel_id,
           userId: run.user_id,
           contactId: run.contact_id!,
           conversationId: run.conversation_id!,
@@ -1779,6 +1784,7 @@ async function startNewRun(
       // contact_id) WHERE status='active', so two accounts sharing
       // a contact phone number each run their own flows independently.
       account_id: flow.account_id,
+      channel_id: flow.channel_id,
       // Audit: preserves the flow's author on the run row for log
       // attribution.
       user_id: flow.user_id,

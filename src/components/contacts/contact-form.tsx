@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useChannel } from '@/hooks/use-channel';
 import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
@@ -49,6 +50,7 @@ export function ContactForm({
   const t = useTranslations('Contacts.form');
   const supabase = createClient();
   const { accountId } = useAuth();
+  const { currentChannelId } = useChannel();
   const isEdit = !!contact;
 
   const [name, setName] = useState('');
@@ -93,7 +95,7 @@ export function ContactForm({
     }
     setCheckingDup(true);
     try {
-      const existing = await findExistingContact(supabase, accountId, value);
+      const existing = await findExistingContact(supabase, accountId, value, currentChannelId);
       setDupMatch(
         existing
           ? { contact: existing, exact: isExactMatch(existing, value) }
@@ -162,11 +164,30 @@ export function ContactForm({
           .eq('id', contactId);
         if (error) throw error;
       } else {
+        // New manual contacts land on whichever channel the user is
+        // currently viewing (migration 039) — falls back to the
+        // account's default channel if the switcher hasn't resolved
+        // one yet (e.g. rendered outside the dashboard shell).
+        let targetChannelId = currentChannelId;
+        if (!targetChannelId) {
+          const { data: defaultChannel } = await supabase
+            .from('whatsapp_config')
+            .select('id')
+            .eq('account_id', accountId)
+            .eq('is_default', true)
+            .maybeSingle();
+          targetChannelId = defaultChannel?.id ?? null;
+        }
+        if (!targetChannelId) {
+          throw new Error(t('toastError'));
+        }
+
         const { data, error } = await supabase
           .from('contacts')
           .insert({
             user_id: user.id,
             account_id: accountId,
+            channel_id: targetChannelId,
             name: name.trim() || null,
             phone: phone.trim(),
             email: email.trim() || null,
@@ -208,6 +229,7 @@ export function ContactForm({
             supabase,
             accountId,
             phone.trim(),
+            currentChannelId,
           );
           if (existing) setDupMatch({ contact: existing, exact: true });
         }

@@ -17,6 +17,7 @@ import { Radio, Plus, Loader2 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
+import { useChannel } from '@/hooks/use-channel';
 import { useTranslations } from 'next-intl';
 
 /**
@@ -62,6 +63,7 @@ export default function BroadcastsPage() {
   const t = useTranslations('Broadcasts.page');
   const tStatus = useTranslations('Broadcasts.status');
   const canCreate = useCan('send-messages');
+  const { currentChannelId: channelId } = useChannel();
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,11 +72,19 @@ export default function BroadcastsPage() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function fetchBroadcasts() {
+    // No channel resolved yet — skip rather than mixing every
+    // channel's broadcasts together (migration 039).
+    if (!channelId) {
+      setBroadcasts([]);
+      setLoading(false);
+      return;
+    }
     try {
       const supabase = createClient();
       const { data, error: fetchError } = await supabase
         .from('broadcasts')
         .select('*')
+        .eq('channel_id', channelId)
         .order('created_at', { ascending: false });
 
       if (fetchError) throw fetchError;
@@ -88,7 +98,8 @@ export default function BroadcastsPage() {
 
   useEffect(() => {
     fetchBroadcasts();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelId]);
 
   const anySending = useMemo(
     () => broadcasts.some((b) => b.status === 'sending'),

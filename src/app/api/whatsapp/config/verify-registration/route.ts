@@ -28,7 +28,7 @@ import {
  * rather than a generic error toast. The combined `live` flag is
  * what the UI badges on.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -38,7 +38,7 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // whatsapp_config is one-row-per-account post-017. Resolve the
+  // An account can own more than one channel post-039. Resolve the
   // caller's account_id so a teammate who joined an existing account
   // sees the same registration state as the admin who set it up.
   const { data: profile } = await supabase
@@ -55,13 +55,14 @@ export async function GET() {
     })
   }
 
-  const { data: config } = await supabase
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .maybeSingle()
+  // `channel_id` selects which channel to check; omit it to check the
+  // account's default channel (back-compat with pre-multi-channel callers).
+  const channelId = new URL(request.url).searchParams.get('channel_id')
+  let configQuery = supabase.from('whatsapp_config').select('*').eq('account_id', accountId)
+  configQuery = channelId ? configQuery.eq('id', channelId) : configQuery.eq('is_default', true)
+  const { data: config } = await configQuery.maybeSingle()
 
-  if (!config) {
+  if (!config || !config.access_token || !config.phone_number_id) {
     return NextResponse.json({
       live: false,
       checks: { config_exists: false },

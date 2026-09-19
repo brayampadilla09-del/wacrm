@@ -35,6 +35,7 @@ import {
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { resolveChannelConfig } from '@/lib/whatsapp/channels';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   sanitizePhoneForMeta,
@@ -263,12 +264,14 @@ export async function sendMessageToConversation(
     );
   }
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
+  // WhatsApp config for the conversation's own channel (migration 039 —
+  // an account can have more than one number, so this can no longer
+  // assume "the account's one row").
+  const { data: config, error: configError } = await resolveChannelConfig(
+    db,
+    accountId,
+    conversation.channel_id
+  );
 
   if (configError || !config) {
     throw new SendMessageError(
