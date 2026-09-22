@@ -48,6 +48,18 @@ export interface ResponseTimeSummary {
   lastWeekAvg: number | null
 }
 
+export interface LeadSourceSlice {
+  id: string
+  name: string
+  color: string
+  count: number
+}
+
+export interface LeadsBySourceData {
+  sources: LeadSourceSlice[]
+  totalCount: number
+}
+
 export type ActivityKind =
   | 'message'
   | 'deal'

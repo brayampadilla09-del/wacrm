@@ -112,6 +112,15 @@
       "total": "합계",
       "ariaLabel": "단계별 파이프라인 금액"
     },
+    "leadsBySource": {
+      "title": "유입 경로별 리드",
+      "description": "새 연락처가 유입된 경로",
+      "noLeads": "아직 리드가 없습니다",
+      "noLeadsHint": "Meta 광고 웹훅이나 웹사이트 예약 마법사에서 태그된 연락처가 여기에 표시됩니다.",
+      "contactCount": "연락처 {count}건",
+      "total": "합계",
+      "ariaLabel": "유입 경로별 리드 분포"
+    },
     "responseTimeChart": {
       "title": "평균 첫 응답 시간",
       "description": "요일별, 고객의 첫 미응답 메시지에 답변하기까지 걸린 시간(분)",
