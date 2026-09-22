@@ -1,6 +1,6 @@
 // ============================================================
-// Service worker — exists for exactly two reasons, and does
-// nothing beyond them on purpose.
+// Service worker — exists for three reasons, and does nothing
+// beyond them on purpose.
 //
 //   1. Installability. Chrome/Android (and desktop Chrome) will
 //      not fire the "Add to Home Screen" / install prompt for a
@@ -12,6 +12,11 @@
 //   2. A real "you're offline" screen instead of the browser's
 //      default dinosaur/no-connection page when someone opens the
 //      installed app with no signal.
+//
+//   3. Web Push (migration 043) — showing the OS notification when
+//      a push arrives, and routing a tap on it back into the app.
+//      This is the only part of the file that runs with the app
+//      fully closed.
 //
 // It deliberately does NOT cache API responses, RSC payloads, or
 // page HTML. This is a live-data CRM — an inbox message list, a
@@ -63,5 +68,49 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     fetch(event.request).catch(() => caches.match(OFFLINE_URL)),
+  );
+});
+
+// ============================================================
+// Web Push
+// ============================================================
+
+self.addEventListener("push", (event) => {
+  let payload = { title: "wacrm", body: "" };
+  try {
+    if (event.data) payload = event.data.json();
+  } catch {
+    // A non-JSON push body would otherwise throw and drop the
+    // notification entirely — fall back to a generic one instead.
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || "wacrm", {
+      body: payload.body,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      data: { url: payload.url || "/" },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/";
+
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        // Reuse an already-open tab instead of opening a new one —
+        // most people leave wacrm open in the background.
+        for (const client of clients) {
+          if ("focus" in client) {
+            client.navigate(url);
+            return client.focus();
+          }
+        }
+        return self.clients.openWindow(url);
+      }),
   );
 });

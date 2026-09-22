@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { sendPushToUsers } from '@/lib/push/send-push';
 
 /**
  * A new lead has no single natural recipient (unlike an assigned
@@ -44,6 +45,16 @@ export async function notifyNewLead(
     if (insertError) {
       console.error('[notifyNewLead] failed to insert notifications:', insertError);
     }
+
+    await sendPushToUsers(
+      db,
+      (members as { user_id: string }[]).map((m) => m.user_id),
+      {
+        title: `New lead from ${source}`,
+        body: `${leadLabel} came in as a new contact`,
+        url: `/contacts?contact=${contactId}`,
+      },
+    );
   } catch (err) {
     console.error('[notifyNewLead] unexpected failure:', err);
   }

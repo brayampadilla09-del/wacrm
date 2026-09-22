@@ -4,6 +4,7 @@ import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
+import { notifyNewMessage } from '@/lib/contacts/notify-new-message'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
@@ -723,11 +724,26 @@ async function processMessage(
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
 
+  // 'new_message' notification (migration 043) — every inbound customer
+  // message, on both channel kinds. Runs before the bot/human branch
+  // below on purpose: 'human' channels are a plain manual inbox with no
+  // automated responders, so this is the *only* thing that reacts to a
+  // message on one.
+  await notifyNewMessage(
+    supabaseAdmin(),
+    accountId,
+    conversation.id,
+    contactRecord.id,
+    conversation.assigned_agent_id ?? null,
+    contactRecord.name || contactRecord.phone || 'Unknown',
+    contentText || `[${message.type}]`,
+  )
+
   // 'human' channels (e.g. Asesor's own number) are a plain manual
   // inbox (migration 039) — the message is stored and the conversation
   // bumped above, but none of the automated responders below ever run
   // on it. The advisor answers by hand; only the notification path
-  // (separate, "notify on every message") reacts to these.
+  // just above reacts to these.
   if (channelKind !== 'bot') return
 
   // ============================================================

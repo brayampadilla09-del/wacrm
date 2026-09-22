@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { usePushNotifications } from "@/hooks/use-push-notifications";
 import type { Notification } from "@/types";
-import { Bell, CheckCheck, Loader2, Megaphone, UserPlus } from "lucide-react";
+import { Bell, BellOff, BellRing, CheckCheck, Loader2, Megaphone, MessageSquare, UserPlus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -15,7 +16,50 @@ import { toast } from "sonner";
 const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
   conversation_assigned: UserPlus,
   new_lead: Megaphone,
+  new_message: MessageSquare,
 };
+
+function PushToggle() {
+  const { supported, permission, subscribed, loading, subscribe, unsubscribe } =
+    usePushNotifications();
+
+  if (!supported) return null;
+
+  if (permission === "denied") {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Notifications are blocked for this site in your browser settings.
+      </p>
+    );
+  }
+
+  return (
+    <Button
+      variant={subscribed ? "outline" : "default"}
+      size="sm"
+      disabled={loading}
+      onClick={() => {
+        if (subscribed) {
+          unsubscribe().then(() => toast.success("Push notifications turned off"));
+        } else {
+          subscribe().then((ok) => {
+            if (ok) toast.success("Push notifications turned on for this device");
+            else toast.error("Couldn't enable push notifications");
+          });
+        }
+      }}
+    >
+      {loading ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : subscribed ? (
+        <BellOff className="h-4 w-4" />
+      ) : (
+        <BellRing className="h-4 w-4" />
+      )}
+      {subscribed ? "Turn off push" : "Get push notifications"}
+    </Button>
+  );
+}
 
 export default function NotificationsPage() {
   const router = useRouter();
@@ -172,19 +216,22 @@ export default function NotificationsPage() {
             Conversations other teammates assign to you show up here.
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={unreadIds.length === 0 || markingAll}
-          onClick={markAllRead}
-        >
-          {markingAll ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <CheckCheck className="h-4 w-4" />
-          )}
-          Mark all as read
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <PushToggle />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={unreadIds.length === 0 || markingAll}
+            onClick={markAllRead}
+          >
+            {markingAll ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCheck className="h-4 w-4" />
+            )}
+            Mark all as read
+          </Button>
+        </div>
       </div>
 
       {notifications.length === 0 ? (

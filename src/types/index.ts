@@ -189,10 +189,11 @@ export interface Conversation {
 }
 
 // ============================================================
-// Notifications (migration 027; 'new_lead' added in migration 042)
+// Notifications (migration 027; 'new_lead' added in 042,
+// 'new_message' added in 043)
 // ============================================================
 
-export type NotificationType = 'conversation_assigned' | 'new_lead';
+export type NotificationType = 'conversation_assigned' | 'new_lead' | 'new_message';
 
 export interface Notification {
   id: string;
