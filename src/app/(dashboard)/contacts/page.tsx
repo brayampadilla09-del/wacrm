@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
@@ -67,6 +68,7 @@ interface ContactWithTags extends Contact {
 
 export default function ContactsPage() {
   const t = useTranslations('Contacts.page');
+  const searchParams = useSearchParams();
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
@@ -265,6 +267,14 @@ export default function ContactsPage() {
     setDetailContactId(contactId);
     setDetailOpen(true);
   }
+
+  // Deep link from a notification (e.g. "new lead" — see
+  // notifications/page.tsx) — /contacts?contact=<id> opens that
+  // contact's detail sheet on load instead of just the plain list.
+  useEffect(() => {
+    const contactId = searchParams.get('contact');
+    if (contactId) openDetail(contactId);
+  }, [searchParams]);
 
   function confirmDelete(contact: Contact) {
     setDeleteTarget(contact);

@@ -193,6 +193,14 @@ match returns `200` with the existing contact; a new contact returns
 `201`. The response body is the serialized contact (same shape as the
 list rows above).
 
+Pass `notify: true` when this call represents one real new lead (a
+booking wizard, a form submission) rather than a bulk import or manual
+add — when it does, and the contact was newly created (not matched),
+every teammate on the account gets a "new lead" notification pointing
+at it. Off by default so CSV imports and manual adds don't fan out a
+notification per row. See `docs/meta-lead-ads.md` for the same
+notification fired from the Meta Lead Ads webhook.
+
 ### `GET` / `PATCH /api/v1/contacts/{id}`
 
 Read or update one contact. Scopes: `contacts:read` / `contacts:write`.

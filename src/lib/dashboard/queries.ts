@@ -10,6 +10,8 @@ import {
 import type {
   ActivityItem,
   ConversationsSeriesPoint,
+  LeadSourceSlice,
+  LeadsBySourceData,
   MetricsBundle,
   PipelineDonutData,
   PipelineStageSlice,
@@ -263,7 +265,66 @@ export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
   }
 }
 
-// --- 5. Activity feed --------------------------------------------------
+// --- 5. Leads by source --------------------------------------------------
+
+// The two tags the automated intake paths stamp on a contact — see
+// wacrm/docs/meta-lead-ads.md (webhook) and pagina-estudio's
+// upsertWacrmLead (website booking wizard). Both are auto-created by
+// setContactTags on first use, so before the first lead of a given
+// source arrives, its row here simply doesn't exist yet.
+const LEAD_SOURCE_TAGS: { name: string; color: string }[] = [
+  { name: 'Meta Ads', color: '#3b82f6' },
+  { name: 'Sitio web', color: '#8b5cf6' },
+]
+const ORGANIC_COLOR = '#10b981'
+
+export async function loadLeadsBySource(db: DB): Promise<LeadsBySourceData> {
+  const [tagsRes, totalRes] = await Promise.all([
+    db
+      .from('tags')
+      .select('id, name')
+      .in('name', LEAD_SOURCE_TAGS.map((s) => s.name)),
+    db.from('contacts').select('id', { count: 'exact', head: true }),
+  ])
+
+  const tagRows = (tagsRes.data ?? []) as { id: string; name: string }[]
+  const totalCount = totalRes.count ?? 0
+
+  // No "Meta Ads" or "Sitio web" tag exists yet → no automated leads
+  // have landed at all (WhatsApp-only so far). Let the caller render
+  // its empty state rather than a donut that's 100% "organic".
+  if (tagRows.length === 0) return { sources: [], totalCount }
+
+  const countsRes = await Promise.all(
+    tagRows.map((tag) =>
+      db.from('contact_tags').select('id', { count: 'exact', head: true }).eq('tag_id', tag.id),
+    ),
+  )
+
+  const sources: LeadSourceSlice[] = tagRows.map((tag, i) => {
+    const meta = LEAD_SOURCE_TAGS.find((s) => s.name === tag.name)
+    return {
+      id: tag.id,
+      name: tag.name,
+      color: meta?.color ?? '#64748b',
+      count: countsRes[i].count ?? 0,
+    }
+  })
+
+  // Everything not tagged as an automated source is presumed organic
+  // WhatsApp (the CRM's original, only intake path). A contact tagged
+  // with BOTH source tags (same phone matched twice — a Meta lead who
+  // later also booked on the site) would double count here, so this
+  // floors at 0 rather than go negative; a rare edge case not worth a
+  // full distinct-contact recount for a dashboard chart.
+  const taggedCount = sources.reduce((sum, s) => sum + s.count, 0)
+  const organicCount = Math.max(0, totalCount - taggedCount)
+  sources.push({ id: 'organic', name: 'WhatsApp', color: ORGANIC_COLOR, count: organicCount })
+
+  return { sources, totalCount }
+}
+
+// --- 6. Activity feed --------------------------------------------------
 
 export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> {
   // Pull ~10 from each source (plenty of headroom after merge-sort),

@@ -14,6 +14,7 @@ import {
 import {
   loadActivity,
   loadConversationsSeries,
+  loadLeadsBySource,
   loadMetrics,
   loadPipelineDonut,
   loadResponseTime,
@@ -21,6 +22,7 @@ import {
 import type {
   ActivityItem,
   ConversationsSeriesPoint,
+  LeadsBySourceData,
   MetricsBundle,
   PipelineDonutData,
   ResponseTimeSummary,
@@ -31,6 +33,7 @@ import { SkeletonCard } from '@/components/dashboard/skeleton'
 import { QuickActions } from '@/components/dashboard/quick-actions'
 import { ConversationsChart } from '@/components/dashboard/conversations-chart'
 import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
+import { LeadsSourceDonut } from '@/components/dashboard/leads-source-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
 import { ActivityFeed } from '@/components/dashboard/activity-feed'
 
@@ -58,6 +61,9 @@ export default function DashboardPage() {
   const [pipeline, setPipeline] = useState<PipelineDonutData | null>(null)
   const [pipelineLoading, setPipelineLoading] = useState(true)
 
+  const [leadsBySource, setLeadsBySource] = useState<LeadsBySourceData | null>(null)
+  const [leadsBySourceLoading, setLeadsBySourceLoading] = useState(true)
+
   const [responseTime, setResponseTime] = useState<ResponseTimeSummary | null>(null)
   const [responseTimeLoading, setResponseTimeLoading] = useState(true)
 
@@ -84,6 +90,11 @@ export default function DashboardPage() {
       .then((p) => setPipeline(p))
       .catch((err) => console.error('[dashboard] pipeline failed:', err))
       .finally(() => setPipelineLoading(false))
+
+    void loadLeadsBySource(db)
+      .then((l) => setLeadsBySource(l))
+      .catch((err) => console.error('[dashboard] leads by source failed:', err))
+      .finally(() => setLeadsBySourceLoading(false))
 
     void loadResponseTime(db)
       .then((r) => setResponseTime(r))
@@ -213,12 +224,13 @@ export default function DashboardPage() {
             onRangeChange={handleRangeChange}
           />
         </div>
-        <div className="h-full lg:col-span-2">
+        <div className="flex flex-col gap-4 lg:col-span-2">
           <PipelineDonut
             data={pipeline}
             loading={pipelineLoading}
             currency={defaultCurrency}
           />
+          <LeadsSourceDonut data={leadsBySource} loading={leadsBySourceLoading} />
         </div>
       </div>
 
