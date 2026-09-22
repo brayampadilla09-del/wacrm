@@ -24,6 +24,7 @@ import {
   resolveAuditUserId,
   ContactError,
 } from '@/lib/api/v1/contacts';
+import { notifyNewLead } from '@/lib/contacts/notify-new-lead';
 
 // PostgREST filter values are comma/paren-delimited; strip anything
 // that could break the `.or()` grammar before interpolating a search
@@ -124,13 +125,24 @@ export async function POST(request: Request) {
       }
     );
 
-    if (Array.isArray(body.tags)) {
-      await setContactTags(
+    const tags = Array.isArray(body.tags)
+      ? body.tags.filter((t): t is string => typeof t === 'string')
+      : [];
+    if (tags.length > 0) {
+      await setContactTags(ctx.supabase, ctx.accountId, auditUserId, id, tags);
+    }
+
+    // Opt-in, not automatic: this endpoint is also used for bulk CSV
+    // imports and manual adds, which must never fan out a notification
+    // per row. Callers that represent one real new lead (a booking
+    // wizard, a form submission) pass `notify: true` explicitly.
+    if (created && body.notify === true) {
+      await notifyNewLead(
         ctx.supabase,
         ctx.accountId,
-        auditUserId,
         id,
-        body.tags.filter((t): t is string => typeof t === 'string')
+        tags[0] ?? 'the public API',
+        (typeof body.name === 'string' && body.name) || phone
       );
     }
 
