@@ -208,6 +208,16 @@ Read or update one contact. Scopes: `contacts:read` / `contacts:write`.
 pass `tags` (an array of tag names) to replace the contact's tags. A
 contact in another account returns `404`.
 
+### `GET /api/v1/contacts/{id}/last-reply`
+
+The timestamp of this contact's most recent inbound (customer) message,
+across every conversation they have on your account. Scope:
+`messages:read`. Returns `{ "last_customer_message_at": "2026-..." }`
+or `null` if they've never messaged you. Built for callers that need
+to answer "did this person write back after date X" without walking
+`conversations` + `messages` by hand — see pagina-estudio's
+`hasWacrmCustomerReplied` for an example.
+
 ### `GET /api/v1/conversations`
 
 List conversations, newest first. Scope: `conversations:read`.
