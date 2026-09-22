@@ -112,6 +112,15 @@
       "total": "Total",
       "ariaLabel": "Pipeline value by stage"
     },
+    "leadsBySource": {
+      "title": "Leads by Source",
+      "description": "Where new contacts are coming from",
+      "noLeads": "No leads yet",
+      "noLeadsHint": "Contacts tagged from the Meta Ads webhook or the website booking wizard will appear here.",
+      "contactCount": "{count} {count, plural, =1 {contact} other {contacts}}",
+      "total": "Total",
+      "ariaLabel": "Leads by source"
+    },
     "responseTimeChart": {
       "title": "Average First Response Time",
       "description": "Minutes to reply to a customer's first unreplied message, by weekday",
