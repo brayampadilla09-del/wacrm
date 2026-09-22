@@ -1525,6 +1525,7 @@
       "profile": "Your profile",
       "security": "Login & security",
       "appearance": "Appearance",
+      "notifications": "Notifications",
       "whatsapp": "WhatsApp",
       "templates": "Templates",
       "quick-replies": "Quick replies",
@@ -1598,6 +1599,15 @@
       "active": "Active",
       "accentColor": "Accent color",
       "useTheme": "Use {name} theme"
+    },
+    "notifications": {
+      "title": "Notifications",
+      "description": "Get a real push notification on this device for new leads and new messages, even when wacrm isn't open.",
+      "pushTitle": "Push notifications",
+      "onDesc": "On for this device.",
+      "offDesc": "Off — turn on to get notified here for new leads and new messages.",
+      "blocked": "Blocked in this browser's site settings. Allow notifications for this site, then reload.",
+      "unsupported": "Not supported in this browser."
     },
     "security": {
       "title": "Login & security",

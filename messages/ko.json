@@ -1525,6 +1525,7 @@
       "profile": "내 프로필",
       "security": "로그인 & 보안",
       "appearance": "화면 설정",
+      "notifications": "알림",
       "whatsapp": "WhatsApp",
       "templates": "템플릿",
       "quick-replies": "빠른 답장",
@@ -1598,6 +1599,15 @@
       "active": "사용 중",
       "accentColor": "강조 색상",
       "useTheme": "{name} 테마 사용"
+    },
+    "notifications": {
+      "title": "알림",
+      "description": "wacrm을 열어두지 않아도 새 리드와 새 메시지에 대해 이 기기로 실제 푸시 알림을 받습니다.",
+      "pushTitle": "푸시 알림",
+      "onDesc": "이 기기에서 켜져 있습니다.",
+      "offDesc": "꺼져 있습니다 — 새 리드와 새 메시지 알림을 받으려면 켜세요.",
+      "blocked": "이 브라우저의 사이트 설정에서 차단되어 있습니다. 이 사이트의 알림을 허용한 뒤 새로고침하세요.",
+      "unsupported": "이 브라우저에서는 지원되지 않습니다."
     },
     "security": {
       "title": "로그인 & 보안",
