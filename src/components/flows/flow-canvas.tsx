@@ -136,7 +136,6 @@ function slotColor(nodeType: NodeType, slotId: string, fallback: string) {
 function FlowNodeCard({ data, selected }: NodeProps) {
   const t = useTranslations('Flows.builder');
   const { node, isEntry, isFlashed } = data as NodeData;
-  const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
   const tSummary = useTranslations('Flows.summary');
   const summary = summarizeNode(node, tSummary);
@@ -624,7 +623,6 @@ function NodeEditSheet({
       </Sheet>
     );
   }
-  const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -757,7 +755,6 @@ function CanvasAddNodeButton({ t }: { t: ReturnType<typeof useTranslations> }) {
                 {t(`categories.${group.id}`)}
               </DropdownMenuLabel>
               {group.types.map((t_type) => {
-                const meta = NODE_META[t_type];
                 return (
                   <DropdownMenuItem
                     key={t_type}

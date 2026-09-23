@@ -166,35 +166,65 @@ export function matchButtonTextReply(
  * before any node-type-specific reply matching in
  * `handleReplyForActiveRun` so an explicit cancel request never gets
  * swallowed as literal `collect_input` data (e.g. captured as the
- * customer's "name") or lost as an unmatched button tap. Contains-match
- * on normalized text, same normalization as `matchButtonTextReply` so
- * "Ya no quiero, cancélalo" matches via both "ya no quiero" and
- * "cancelalo".
+ * customer's "name") or lost as an unmatched button tap. Same
+ * normalization as `matchButtonTextReply` so "Ya no quiero, cancélalo"
+ * matches via both "ya no quiero" and "cancelalo".
+ *
+ * Two lists on purpose. CANCEL_PHRASES are unambiguous anywhere in the
+ * message. CANCEL_WHOLE_MESSAGE are short words that also show up in
+ * perfectly normal answers ("ya no puedo el martes, mejor el jueves",
+ * "mejor no el lunes") — a contains-match on those ended the run in the
+ * middle of a reschedule, so they only count when they ARE the message.
  */
-const CANCEL_KEYWORDS = [
+const CANCEL_PHRASES = [
   "cancelar",
   "cancela",
   "cancelalo",
   "ya no quiero",
-  "ya no",
   "olvidalo",
   "no quiero continuar",
   "no quiero seguir",
+  "dejalo asi",
+  "nevermind",
+  "never mind",
+];
+
+const CANCEL_WHOLE_MESSAGE = [
+  "ya no",
   "detener",
   "detenlo",
   "para ya",
-  "dejalo asi",
   "mejor no",
   "stop",
   "cancel",
-  "nevermind",
-  "never mind",
+  "salir",
 ];
 
 export function matchesCancelIntentKeyword(text: string): boolean {
   const needle = normalizeText(text);
   if (!needle) return false;
-  return CANCEL_KEYWORDS.some((k) => needle.includes(k));
+  if (CANCEL_WHOLE_MESSAGE.includes(needle)) return true;
+  return CANCEL_PHRASES.some((k) => needle.includes(k));
+}
+
+/**
+ * How long after a human agent types in a conversation the bot stays
+ * out of it. Without this, a customer answering the agent with
+ * "hola, sí, una cita el jueves" matched the flow's entry keywords
+ * ("hola", "cita") and the bot barged into the human conversation with
+ * its welcome image and menu.
+ */
+const HUMAN_TAKEOVER_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * Serializes a value as the *inside* of a JSON string literal. Used for
+ * http_fetch body templates, where `{{contact.full_name}}` sits between
+ * quotes: a customer-typed quote, backslash or line break would
+ * otherwise produce invalid JSON (the request fails) or let the text
+ * inject extra fields into the payload.
+ */
+function jsonStringEscape(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
 }
 
 /** Stable synthetic reply_id for the "customer wants to cancel" option
@@ -528,6 +558,64 @@ async function isDuplicateInbound(
   return (count ?? 0) > 0;
 }
 
+/**
+ * True when a person owns this conversation right now, so a new flow
+ * run must not start (an active run is already paused the moment an
+ * agent sends, see send-message.ts — this covers the *next* inbound,
+ * which would otherwise re-trigger the bot on words like "hola"/"cita").
+ *
+ * A person owns it when, within HUMAN_TAKEOVER_WINDOW_MS:
+ *   - an agent typed a message in it (sender_type 'agent' and not a
+ *     template: pagina-estudio's API sends are always templates), or
+ *   - the bot handed it off and it is still waiting in 'pending'.
+ * Closing the conversation hands it back to the bot immediately (the
+ * caller skips this check when it was closed before this inbound).
+ */
+async function isHumanHandlingConversation(
+  db: AdminClient,
+  accountId: string,
+  contactId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const { data: conv } = await db
+    .from("conversations")
+    .select("status")
+    .eq("id", conversationId)
+    .maybeSingle();
+  const status = (conv as { status?: string } | null)?.status;
+
+  const since = new Date(Date.now() - HUMAN_TAKEOVER_WINDOW_MS).toISOString();
+
+  const { count: agentMessages } = await db
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("sender_type", "agent")
+    .neq("content_type", "template")
+    .gte("created_at", since);
+  if ((agentMessages ?? 0) > 0) return true;
+
+  if (status === "pending") {
+    const { data: lastRun } = await db
+      .from("flow_runs")
+      .select("status, ended_at")
+      .eq("account_id", accountId)
+      .eq("contact_id", contactId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const run = lastRun as { status?: string; ended_at?: string | null } | null;
+    if (
+      run?.status === "handed_off" &&
+      run.ended_at &&
+      new Date(run.ended_at).getTime() >= Date.now() - HUMAN_TAKEOVER_WINDOW_MS
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function findEntryFlow(
   db: AdminClient,
   accountId: string,
@@ -556,10 +644,14 @@ async function findEntryFlow(
   const keywordCandidates: FlowRow[] = [];
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
-      if (matchesKeywordTrigger(
-        message.text,
-        flow.trigger_config as KeywordTriggerConfig,
-      )) {
+      const cfg = flow.trigger_config as KeywordTriggerConfig;
+      // `also_on_first_message`: a brand-new contact whose first message
+      // happens to contain none of the keywords ("Buen día, quisiera
+      // cotizar") would otherwise get no reply at all.
+      if (
+        matchesKeywordTrigger(message.text, cfg) ||
+        (isFirstInbound && cfg.also_on_first_message === true)
+      ) {
         return flow;
       }
       keywordCandidates.push(flow);
@@ -658,6 +750,23 @@ async function sendListAndSuspend(
   }>;
 
   if (cfg.dynamic) {
+    // A selection captured by an earlier pass through this list (a
+    // previous attempt in the same run) must not survive into this one:
+    // when the list comes back empty the flow falls through to a
+    // free-text fallback, and the stale slot id from the first attempt
+    // was being submitted alongside the new free-text request.
+    const cleared = withoutVars(run.vars, [
+      cfg.dynamic.capture_id_var,
+      cfg.dynamic.capture_title_var,
+    ]);
+    if (cleared) {
+      const { error: clearErr } = await db
+        .from("flow_runs")
+        .update({ vars: cleared })
+        .eq("id", run.id);
+      if (!clearErr) run.vars = cleared;
+    }
+
     const rows = resolveVarArray(run.vars, cfg.dynamic.rows_var);
     if (rows.length === 0) {
       // Meta rejects a 0-row interactive list — degrade to a plain
@@ -807,12 +916,15 @@ async function evaluateConditionNode(
  * http_fetch's body_template (`contact` passed) so it can reference the
  * WhatsApp contact's own phone/name without the customer having typed
  * it. Missing vars/fields render as empty string — same behavior as
- * the automations engine's `interpolate()`.
+ * the automations engine's `interpolate()`. `escape` is applied to each
+ * substituted value (not the template itself) — http_fetch passes
+ * `jsonStringEscape` so customer-typed text can't break the JSON body.
  */
 function interpolateVars(
   template: string,
   vars: Record<string, unknown>,
   contact?: { phone?: string; name?: string; email?: string; full_name?: string },
+  escape: (value: string) => string = (value) => value,
 ): string {
   if (!template) return "";
   return template.replace(
@@ -820,12 +932,26 @@ function interpolateVars(
     (_, ns: string, key: string) => {
       if (ns === "contact") {
         const v = contact?.[key as "phone" | "name" | "email" | "full_name"];
-        return v ?? "";
+        return escape(v ?? "");
       }
       const v = vars[key];
-      return v === undefined || v === null ? "" : String(v);
+      return escape(v === undefined || v === null ? "" : String(v));
     },
   );
+}
+
+/**
+ * Returns a copy of `vars` without `keys`, or null when none of them
+ * were set (so callers can skip a no-op DB write).
+ */
+function withoutVars(
+  vars: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> | null {
+  if (!keys.some((k) => k in vars)) return null;
+  const next = { ...vars };
+  for (const k of keys) delete next[k];
+  return next;
 }
 
 /**
@@ -868,7 +994,10 @@ async function cancelActiveRun(
       userId: run.user_id,
       conversationId: run.conversation_id!,
       contactId: run.contact_id!,
-      text: "Listo, cancelo esto por ahora 👍 Si más adelante quieres retomarlo, solo escríbeme.",
+      // Spells out that nothing was cancelled on the booking side: the
+      // old "Listo, cancelo esto por ahora" read as "your appointment is
+      // cancelled" to someone who typed "cancelar" meaning the appointment.
+      text: "Listo, lo dejamos aquí por ahora 👍 Ojo: esto no cancela ninguna cita que ya tengas agendada. Si quieres cancelarla, escríbeme *menú* y elige «Cancelar mi cita». Cuando quieras retomar, solo escríbeme.",
     });
   } catch (err) {
     await logEvent(db, run.id, "error", run.current_node_key, {
@@ -1114,6 +1243,13 @@ async function advanceFromNodeKey(
     }
     if (node.node_type === "http_fetch") {
       const cfg = node.config as unknown as HttpFetchNodeConfig;
+      // What this call returned, when it succeeded with a JSON body.
+      // Written to `response_var` after the call either way: set on
+      // success, REMOVED on failure. Leaving the previous value in place
+      // on failure made a retry look successful — e.g. a second
+      // reschedule attempt that got a 409 still found `reschedule_result`
+      // from the first one, and the flow told the customer "¡Listo!".
+      let captured: unknown = undefined;
       try {
         // https-only, re-enforced here (not just at flow-save time in
         // validate.ts) in case an older flow was authored before this
@@ -1128,7 +1264,7 @@ async function advanceFromNodeKey(
         const method = cfg.method ?? "POST";
         const body =
           method !== "GET" && cfg.body_template
-            ? interpolateVars(cfg.body_template, run.vars, contact)
+            ? interpolateVars(cfg.body_template, run.vars, contact, jsonStringEscape)
             : undefined;
         const res = await fetch(cfg.url, {
           method,
@@ -1159,14 +1295,7 @@ async function advanceFromNodeKey(
           const contentType = res.headers.get("content-type") ?? "";
           if (contentType.includes("application/json")) {
             const parsed = await res.json().catch(() => null);
-            if (parsed !== null) {
-              const newVars = { ...run.vars, [cfg.response_var]: parsed };
-              const { error: capErr } = await db
-                .from("flow_runs")
-                .update({ vars: newVars })
-                .eq("id", run.id);
-              if (!capErr) run.vars = newVars;
-            }
+            if (parsed !== null) captured = parsed;
           }
         }
       } catch (err) {
@@ -1177,6 +1306,19 @@ async function advanceFromNodeKey(
           reason: "http_fetch_failed",
           detail: err instanceof Error ? err.message : String(err),
         });
+      }
+      if (cfg.response_var) {
+        const newVars =
+          captured !== undefined
+            ? { ...run.vars, [cfg.response_var]: captured }
+            : withoutVars(run.vars, [cfg.response_var]);
+        if (newVars) {
+          const { error: capErr } = await db
+            .from("flow_runs")
+            .update({ vars: newVars })
+            .eq("id", run.id);
+          if (!capErr) run.vars = newVars;
+        }
       }
       currentKey = cfg.next_node_key;
       continue;
@@ -1341,6 +1483,15 @@ export async function dispatchInboundToFlows(
       return handleReplyForActiveRun(db, activeRun, input.message, nodes);
     }
 
+    // No active run. Before starting one, make sure a person isn't
+    // already handling this conversation (see isHumanHandlingConversation).
+    if (
+      input.conversationStatusBeforeInbound !== "closed" &&
+      (await isHumanHandlingConversation(db, input.accountId, input.contactId, input.conversationId))
+    ) {
+      return { consumed: false, outcome: "no_match" };
+    }
+
     // No active run → look for a flow whose entry trigger matches.
     const flow = await findEntryFlow(
       db,
@@ -1409,8 +1560,18 @@ async function handleReplyForActiveRun(
   // collect_input (where "accept anything" makes a paraphrase the
   // riskiest to miss) and only when AI is configured/active for the
   // account — see ai-router.ts's classifyCancelIntent.
+  const isButtonNode =
+    currentNode.node_type === "send_buttons" ||
+    currentNode.node_type === "send_list";
+
   if (message.kind === "text") {
-    if (matchesCancelIntentKeyword(message.text)) {
+    // A typed reply that names one of the node's own options wins over
+    // the cancel keywords: "cancelar mi cita" on the main menu (whose
+    // option is literally "Cancelar mi cita") must go to the cancel-
+    // appointment branch, not end the whole conversation.
+    const namesAnOption =
+      isButtonNode && matchButtonTextReply(currentNode, message.text) !== null;
+    if (!namesAnOption && matchesCancelIntentKeyword(message.text)) {
       return cancelActiveRun(db, run);
     }
     if (currentNode.node_type === "collect_input") {
@@ -1435,9 +1596,6 @@ async function handleReplyForActiveRun(
   //
   // Everything else falls through to the fallback policy below.
   let matched: string | null = null;
-  const isButtonNode =
-    currentNode.node_type === "send_buttons" ||
-    currentNode.node_type === "send_list";
   let resolvedReplyId: string | null =
     message.kind === "interactive_reply" && isButtonNode
       ? message.reply_id
@@ -1498,6 +1656,16 @@ async function handleReplyForActiveRun(
           if (hit) {
             captures[cfg.dynamic.capture_title_var] = hit.title;
             captures[cfg.dynamic.capture_id_var] = hit.id;
+          } else {
+            // A tap on an OLDER copy of this list (an earlier page, or a
+            // list from a previous attempt) — its row isn't in the rows
+            // we just sent, so nothing would be captured and the flow
+            // would move on to "confirm" with no slot picked. Treat it as
+            // unmatched so the fallback re-sends the current options.
+            await logEvent(db, run.id, "error", currentNode.node_key, {
+              reason: "stale_dynamic_list_reply",
+            });
+            matched = null;
           }
         } else {
           for (const section of cfg.sections ?? []) {
@@ -1686,13 +1854,14 @@ async function handleReplyForActiveRun(
     // explicación, y asume que el bot lo ignoró o está roto. Un
     // collect_input no tiene "opciones de abajo", así que ese nodo usa un
     // hint específico del tipo de validación en vez del texto genérico.
-    const clarifyText =
+    const collectCfg =
       currentNode.node_type === "collect_input"
-        ? collectInputValidationHint(
-            (currentNode.config as unknown as CollectInputNodeConfig)
-              .validation,
-          )
-        : "Disculpa, no logré entender tu mensaje 🙏 Por favor elige una de las opciones de abajo.";
+        ? (currentNode.config as unknown as CollectInputNodeConfig)
+        : null;
+    const clarifyText = collectCfg
+      ? collectCfg.invalid_text?.trim() ||
+        collectInputValidationHint(collectCfg.validation)
+      : "Disculpa, no logré entender tu mensaje 🙏 Por favor elige una de las opciones de abajo.";
     try {
       await engineSendText({
         accountId: run.account_id,

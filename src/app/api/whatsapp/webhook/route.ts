@@ -1,7 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { notifyNewMessage } from '@/lib/contacts/notify-new-message'
@@ -704,7 +704,10 @@ async function processMessage(
     return
   }
 
-  // Update conversation
+  // Update conversation. A new customer message reopens a closed one —
+  // otherwise a thread closed by the inactivity sweep (or by an agent)
+  // stayed 'closed' forever: hidden from the Open filter, and never
+  // eligible for the sweep again.
   const { error: convError } = await supabaseAdmin()
     .from('conversations')
     .update({
@@ -712,6 +715,7 @@ async function processMessage(
       last_message_at: new Date().toISOString(),
       unread_count: (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
+      ...(conversation.status === 'closed' ? { status: 'open' } : {}),
     })
     .eq('id', conversation.id)
 
@@ -793,6 +797,7 @@ async function processMessage(
     userId: configOwnerUserId,
     contactId: contactRecord.id,
     conversationId: conversation.id,
+    conversationStatusBeforeInbound: conversation.status,
     message:
       interactiveReplyId
         ? {

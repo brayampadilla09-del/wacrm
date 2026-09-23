@@ -167,6 +167,14 @@ describe("matchesCancelIntentKeyword", () => {
     expect(matchesCancelIntentKeyword("el jueves a las 3pm")).toBe(false);
   });
 
+  it("only treats short ambiguous words as cancel when they are the whole message", () => {
+    expect(matchesCancelIntentKeyword("ya no")).toBe(true);
+    expect(matchesCancelIntentKeyword("Mejor no.")).toBe(true);
+    expect(matchesCancelIntentKeyword("ya no puedo el martes, mejor el jueves")).toBe(false);
+    expect(matchesCancelIntentKeyword("mejor no el lunes")).toBe(false);
+    expect(matchesCancelIntentKeyword("mi correo es stopmotion@gmail.com")).toBe(false);
+  });
+
   it("skips empty strings in the keywords array", () => {
     const cfg = { keywords: ["", "support", ""] };
     expect(matchesKeywordTrigger("support center", cfg)).toBe(true);

@@ -374,7 +374,7 @@ const BSIGN_MENU: FlowTemplate = {
       node_key: "proyectos_msg",
       node_type: "send_message",
       config: {
-        text: "Aquí puedes ver algunos de nuestros proyectos de diseño ya entregados: https://bsignestudio.com/proyectos 🖼️",
+        text: "Aquí puedes ver algunas de nuestras propuestas de diseño 🖼️: https://bsignestudio.com/#proyectos",
         next_node_key: "anything_else",
       } as SendMessageNodeConfig,
     },

@@ -170,6 +170,13 @@ export interface CollectInputNodeConfig {
   validation?: "any" | "email" | "phone" | "regex";
   /** Used only when `validation === 'regex'`. */
   regex?: string;
+  /**
+   * Optional custom hint sent when a reply fails validation, instead of
+   * the generic per-validation text — a regex rule is usually specific
+   * enough ("solo tu nombre, sin números") that the generic "ese
+   * formato no es el que esperamos" leaves the customer guessing.
+   */
+  invalid_text?: string;
   /** Node to advance to after capture. */
   next_node_key: string;
   /**
@@ -280,6 +287,9 @@ export interface KeywordTriggerConfig {
   keywords: string[];
   match_type?: "exact" | "contains";
   case_sensitive?: boolean;
+  /** Also start on a contact's very first inbound message, even when it
+   *  contains none of the keywords. */
+  also_on_first_message?: boolean;
 }
 
 // No knobs in v1 — the trigger has a single semantic. Kept as a type
@@ -421,6 +431,10 @@ export interface DispatchInboundInput {
   userId: string;
   contactId: string;
   conversationId: string;
+  /** The conversation's status BEFORE this inbound (the webhook reopens a
+   *  closed one on arrival). 'closed' means whoever handled it is done,
+   *  so the bot may answer again right away. */
+  conversationStatusBeforeInbound?: string;
   message: ParsedInbound;
 }
 

@@ -271,10 +271,14 @@ export default function ContactsPage() {
   // Deep link from a notification (e.g. "new lead" — see
   // notifications/page.tsx) — /contacts?contact=<id> opens that
   // contact's detail sheet on load instead of just the plain list.
-  useEffect(() => {
-    const contactId = searchParams.get('contact');
-    if (contactId) openDetail(contactId);
-  }, [searchParams]);
+  // Adjusted during render (not in an effect) when the param changes,
+  // so opening the sheet doesn't cost an extra cascading render.
+  const deepLinkContactId = searchParams.get('contact');
+  const [handledDeepLink, setHandledDeepLink] = useState<string | null>(null);
+  if (deepLinkContactId && deepLinkContactId !== handledDeepLink) {
+    setHandledDeepLink(deepLinkContactId);
+    openDetail(deepLinkContactId);
+  }
 
   function confirmDelete(contact: Contact) {
     setDeleteTarget(contact);
