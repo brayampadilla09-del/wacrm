@@ -166,6 +166,7 @@ export async function classifyMenuOptionIntent(
     systemPrompt:
       'Eres un clasificador de intención para un bot de WhatsApp. El bot le mostró al cliente un menú de opciones (botones o una lista), y el cliente respondió con texto libre en vez de tocar una. ' +
       'Se te da su mensaje y la lista numerada de opciones disponibles. Responde ÚNICAMENTE con el número de la opción que el cliente probablemente quiso elegir, o con 0 si su mensaje no corresponde con confianza a ninguna opción de la lista (por ejemplo, si parece una pregunta distinta o un comentario). ' +
+      'Si el mensaje pregunta por una opción para entenderla (qué es, qué incluye, cuánto cuesta, cuánto dura, cómo funciona), responde 0: quiere que se la expliquen, no elegirla todavía. Si es un pedido o una respuesta aunque venga con signos de pregunta ("¿me puedes agendar?", "¿puedo ver el menú?", "que sí"), elige esa opción. ' +
       'No expliques tu respuesta, no agregues texto adicional — responde solo con el número.',
     optionLines: options.map(
       (o, i) => `${i + 1}. ${o.title}${o.description ? ` — ${o.description}` : ''}`,

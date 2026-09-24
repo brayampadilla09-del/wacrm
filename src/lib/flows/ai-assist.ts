@@ -139,3 +139,29 @@ export async function assistOffScriptReply(
     return UNAVAILABLE;
   }
 }
+
+/**
+ * Whether the out-of-flow AI auto-reply would take a message on this
+ * conversation (`dispatchInboundToAiReply`'s gates): AI on with
+ * auto-reply enabled, not paused here, no agent assigned. The flow
+ * engine asks before letting a question skip keyword triggers, so a
+ * question is never left unanswered by both. Never throws.
+ */
+export async function aiAutoReplyWillAnswer(
+  db: SupabaseClient,
+  accountId: string,
+  conversationId: string,
+): Promise<boolean> {
+  try {
+    const config = await loadAiConfig(db, accountId);
+    if (!config || !config.autoReplyEnabled) return false;
+    const { data: conv } = await db
+      .from("conversations")
+      .select("ai_autoreply_disabled, assigned_agent_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    return !!conv && !conv.ai_autoreply_disabled && !conv.assigned_agent_id;
+  } catch {
+    return false;
+  }
+}

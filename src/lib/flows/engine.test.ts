@@ -175,6 +175,19 @@ describe("looksLikeQuestion", () => {
     expect(looksLikeQuestion("para qué el correo?")).toBe(true);
     expect(looksLikeQuestion("ana@correo.com")).toBe(false);
   });
+
+  it("detects questions typed without marks by their opener", () => {
+    expect(looksLikeQuestion("Qué es la cita de descubrimiento")).toBe(true);
+    expect(looksLikeQuestion("cuanto cuesta sueño")).toBe(true);
+    expect(looksLikeQuestion("Por qué me cancelaron")).toBe(true);
+  });
+
+  it("does not flag answers and requests", () => {
+    expect(looksLikeQuestion("Cita de descubrimiento")).toBe(false);
+    expect(looksLikeQuestion("Quiero agendar una cita")).toBe(false);
+    expect(looksLikeQuestion("Queremos cambiar la sala")).toBe(false);
+    expect(looksLikeQuestion("Ana María")).toBe(false);
+  });
 });
 
 describe("matchesCancelIntentKeyword", () => {

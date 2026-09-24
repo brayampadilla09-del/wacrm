@@ -45,7 +45,7 @@ import {
   classifyMenuOptionIntent,
   classifyCancelIntent,
 } from "./ai-router";
-import { assistOffScriptReply } from "./ai-assist";
+import { assistOffScriptReply, aiAutoReplyWillAnswer } from "./ai-assist";
 import { recordHandoffSummary } from "@/lib/ai/summary";
 import type { HandoffReason } from "@/lib/ai/handoff";
 import type { FlowStepContext } from "@/lib/ai/defaults";
@@ -682,10 +682,21 @@ async function findExplicitRestartFlow(
   return null;
 }
 
-/** A typed answer that reads as a question rather than the data a
- *  collect_input step asked for ("¿para qué necesitan mi correo?"). */
+/** Openers that make a message a question even without "?" — customers
+ *  on WhatsApp often skip the marks ("que es la cita de descubrimiento"). */
+const QUESTION_OPENER =
+  /^(que|como|cuanto|cuanta|cuantos|cuantas|cual|cuales|donde|cuando|quien|quienes|por que|para que|de que|en que)\b/;
+
+/**
+ * A message asking for information rather than picking an option or
+ * giving the data a step asked for: "¿Qué es la cita de descubrimiento?",
+ * "cuanto cuesta sueño". Such a message must not be matched literally
+ * against option titles (it names the option it asks about), nor read as
+ * a cancel request ("¿cómo cancelo?"), nor captured as a name.
+ */
 export function looksLikeQuestion(text: string): boolean {
-  return /[?¿]/.test(text);
+  if (/[?¿]/.test(text)) return true;
+  return QUESTION_OPENER.test(normalizeText(text));
 }
 
 async function findEntryFlow(
@@ -694,6 +705,14 @@ async function findEntryFlow(
   channelId: string,
   message: ParsedInbound,
   isFirstInbound: boolean,
+  /**
+   * The message is a question and the AI auto-reply will answer it if no
+   * flow takes it. Then only an explicit restart ("hola", "menú") or the
+   * AI intent classifier may start a flow: a contains-match on "cita"
+   * restarted the menu on "La cita de descubrimiento, ¿qué es?" and the
+   * question was never answered.
+   */
+  questionForAi = false,
 ): Promise<FlowRow | null> {
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
@@ -720,14 +739,17 @@ async function findEntryFlow(
       // `also_on_first_message`: a brand-new contact whose first message
       // happens to contain none of the keywords ("Buen día, quisiera
       // cotizar") would otherwise get no reply at all.
-      if (
-        matchesKeywordTrigger(message.text, cfg) ||
-        (isFirstInbound && cfg.also_on_first_message === true)
-      ) {
-        return flow;
-      }
+      const hit = questionForAi
+        ? isExplicitRestartRequest(message.text, cfg.keywords)
+        : matchesKeywordTrigger(message.text, cfg) ||
+          (isFirstInbound && cfg.also_on_first_message === true);
+      if (hit) return flow;
       keywordCandidates.push(flow);
-    } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
+    } else if (
+      flow.trigger_type === "first_inbound_message" &&
+      isFirstInbound &&
+      !questionForAi
+    ) {
       return flow;
     }
     // 'manual' triggers do not auto-start from inbound messages.
@@ -1229,7 +1251,7 @@ function interpolateVars(
     (_, ns: string, key: string) => {
       if (ns === "contact") {
         const v = contact?.[key as "phone" | "name" | "email" | "full_name"];
-        return escape(v ?? "");
+        return escape((v ?? "").trim());
       }
       const v = vars[key];
       return escape(v === undefined || v === null ? "" : String(v));
@@ -1790,12 +1812,17 @@ export async function dispatchInboundToFlows(
     }
 
     // No active run → look for a flow whose entry trigger matches.
+    const questionForAi =
+      input.message.kind === "text" &&
+      looksLikeQuestion(input.message.text) &&
+      (await aiAutoReplyWillAnswer(db, input.accountId, input.conversationId));
     const flow = await findEntryFlow(
       db,
       input.accountId,
       input.channelId,
       input.message,
       input.isFirstInboundMessage,
+      questionForAi,
     );
     if (!flow || !flow.entry_node_id) {
       return { consumed: false, outcome: "no_match" };
@@ -1956,7 +1983,22 @@ async function handleReplyForActiveRun(
     currentNode.node_type === "send_buttons" ||
     currentNode.node_type === "send_list";
 
-  if (message.kind === "text") {
+  // A question is an aside to answer, not a selection or a cancel: "¿Qué
+  // es la cita de descubrimiento?" contains the option title "Cita de
+  // descubrimiento" and was taken as a tap, dropping the customer into
+  // the booking steps without ever answering them. Free-text prompts
+  // (validation "any", e.g. "what day works for you?") are exempt: there
+  // "¿el lunes a las 3?" IS the answer.
+  const collectValidation =
+    currentNode.node_type === "collect_input"
+      ? ((currentNode.config as unknown as CollectInputNodeConfig).validation ?? "any")
+      : null;
+  const isQuestion =
+    message.kind === "text" &&
+    collectValidation !== "any" &&
+    looksLikeQuestion(message.text);
+
+  if (message.kind === "text" && !isQuestion) {
     // A typed reply that names one of the node's own options wins over
     // the cancel keywords: "cancelar mi cita" on the main menu (whose
     // option is literally "Cancelar mi cita") must go to the cancel-
@@ -1991,7 +2033,7 @@ async function handleReplyForActiveRun(
   let resolvedReplyId: string | null =
     message.kind === "interactive_reply" && isButtonNode
       ? message.reply_id
-      : message.kind === "text" && isButtonNode
+      : message.kind === "text" && isButtonNode && !isQuestion
         ? matchButtonTextReply(currentNode, message.text)
         : null;
 
@@ -2081,7 +2123,8 @@ async function handleReplyForActiveRun(
     }
   } else if (
     message.kind === "text" &&
-    currentNode.node_type === "collect_input"
+    currentNode.node_type === "collect_input" &&
+    !isQuestion
   ) {
     const cfg = currentNode.config as unknown as CollectInputNodeConfig;
     const captured = message.text.trim();
@@ -2231,8 +2274,7 @@ async function handleReplyForActiveRun(
   const isAside =
     message.kind === "text" &&
     message.text.trim().length > 0 &&
-    (isButtonNode ||
-      (currentNode.node_type === "collect_input" && looksLikeQuestion(message.text)));
+    (isButtonNode || isQuestion);
   if (isAside && run.conversation_id && run.contact_id) {
     const assist = await assistOffScriptReply(db, {
       accountId: run.account_id,
