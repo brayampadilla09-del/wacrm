@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({
   retrieveKnowledge: vi.fn(),
   generateReply: vi.fn(),
   engineSendText: vi.fn(),
+  handOffConversationToHuman: vi.fn(),
+  hasRecentAgentMessage: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -22,6 +24,10 @@ vi.mock('./context', () => ({ buildConversationContext: h.buildConversationConte
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
+vi.mock('@/lib/flows/engine', () => ({
+  handOffConversationToHuman: h.handOffConversationToHuman,
+  hasRecentAgentMessage: h.hasRecentAgentMessage,
+}))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
@@ -61,6 +67,7 @@ import { dispatchInboundToAiReply } from './auto-reply'
 
 const ARGS = {
   accountId: 'acct-1',
+  channelId: 'chan-1',
   conversationId: 'conv-1',
   contactId: 'contact-1',
   configOwnerUserId: 'user-1',
@@ -96,6 +103,9 @@ beforeEach(() => {
   h.retrieveKnowledge.mockResolvedValue([])
   h.generateReply.mockResolvedValue({ text: 'Hello!', handoff: false })
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
+  h.handOffConversationToHuman.mockReset()
+  h.handOffConversationToHuman.mockResolvedValue(undefined)
+  h.hasRecentAgentMessage.mockResolvedValue(false)
 })
 
 describe('dispatchInboundToAiReply — eligibility gates', () => {
@@ -168,14 +178,25 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
-  it('skips when the per-conversation cap is reached', async () => {
+  it('hands off instead of replying once the per-conversation cap is reached', async () => {
     h.state.conv = {
       assigned_agent_id: null,
       ai_autoreply_disabled: false,
       ai_reply_count: 3,
     }
     await dispatchInboundToAiReply(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.handOffConversationToHuman).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-1', channelId: 'chan-1', reason: 'ai_limit' }),
+    )
+  })
+
+  it('skips when an agent typed in the conversation recently', async () => {
+    h.hasRecentAgentMessage.mockResolvedValue(true)
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.handOffConversationToHuman).not.toHaveBeenCalled()
   })
 
   it('skips when there is nothing to reply to', async () => {
@@ -187,26 +208,28 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
 })
 
 describe('dispatchInboundToAiReply — handoff', () => {
-  it('disables auto-reply, writes a summary, and does not send on handoff', async () => {
+  it('hands the thread to the team and sends no AI reply when the model bails', async () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).not.toHaveBeenCalled()
     expect(h.state.rpcCalls).toHaveLength(0)
-    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
-    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
-      'AI agent handed off',
-    )
+    expect(h.handOffConversationToHuman).toHaveBeenCalledWith({
+      accountId: 'acct-1',
+      channelId: 'chan-1',
+      contactId: 'contact-1',
+      conversationId: 'conv-1',
+      configOwnerUserId: 'user-1',
+      reason: 'ai_unsure',
+    })
     // No handoff target configured → conversation left unassigned.
-    expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+    expect(h.state.updatePayload).toBeNull()
   })
 
   it('routes to the configured handoff agent on handoff', async () => {
     h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
-    expect(h.state.updatePayload).toMatchObject({
-      ai_autoreply_disabled: true,
-      assigned_agent_id: 'agent-7',
-    })
+    expect(h.state.updatePayload).toEqual({ assigned_agent_id: 'agent-7' })
+    expect(h.handOffConversationToHuman).toHaveBeenCalled()
   })
 })

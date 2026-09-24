@@ -3,6 +3,8 @@ import {
   matchReplyId,
   matchesKeywordTrigger,
   matchesCancelIntentKeyword,
+  isExplicitRestartRequest,
+  looksLikeQuestion,
   isAutoAdvancing,
   isSuspending,
   isTerminal,
@@ -136,6 +138,42 @@ describe("matchesKeywordTrigger", () => {
     expect(matchesKeywordTrigger("I have an issue", cfg)).toBe(true);
     expect(matchesKeywordTrigger("I need Help!", cfg)).toBe(true);
     expect(matchesKeywordTrigger("nothing to see here", cfg)).toBe(false);
+  });
+});
+
+describe("isExplicitRestartRequest", () => {
+  const keywords = ["hola", "menú", "cita", "buenos días", "precio"];
+
+  it("restarts on a keyword alone or a short message that starts with one", () => {
+    expect(isExplicitRestartRequest("Hola", keywords)).toBe(true);
+    expect(isExplicitRestartRequest("hola bimi!", keywords)).toBe(true);
+    expect(isExplicitRestartRequest("menu por favor", keywords)).toBe(true);
+    expect(isExplicitRestartRequest("Buenos dias", keywords)).toBe(true);
+  });
+
+  it("does not restart on answers that merely mention a keyword", () => {
+    expect(isExplicitRestartRequest("Sí, confirmo la cita", keywords)).toBe(false);
+    expect(isExplicitRestartRequest("confirmo la cita", keywords)).toBe(false);
+    expect(isExplicitRestartRequest("quiero una cita", keywords)).toBe(false);
+    expect(isExplicitRestartRequest("hola, cuánto cuesta el plan sueño?", keywords)).toBe(false);
+  });
+
+  it("does not treat a longer word that starts like a keyword as the keyword", () => {
+    expect(isExplicitRestartRequest("citas", keywords)).toBe(false);
+    expect(isExplicitRestartRequest("holaaa", keywords)).toBe(false);
+  });
+
+  it("returns false for empty text or no keywords", () => {
+    expect(isExplicitRestartRequest("  ", keywords)).toBe(false);
+    expect(isExplicitRestartRequest("hola", undefined)).toBe(false);
+  });
+});
+
+describe("looksLikeQuestion", () => {
+  it("detects either question mark", () => {
+    expect(looksLikeQuestion("¿para qué el correo")).toBe(true);
+    expect(looksLikeQuestion("para qué el correo?")).toBe(true);
+    expect(looksLikeQuestion("ana@correo.com")).toBe(false);
   });
 });
 

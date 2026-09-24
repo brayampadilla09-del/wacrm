@@ -715,7 +715,17 @@ async function processMessage(
       last_message_at: new Date().toISOString(),
       unread_count: (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
-      ...(conversation.status === 'closed' ? { status: 'open' } : {}),
+      // Reopening also starts a fresh AI episode: closing a thread hands
+      // it back to the bot (see isHumanHandlingConversation), so a pause
+      // or spent reply budget from the last handoff must not carry over.
+      ...(conversation.status === 'closed'
+        ? {
+            status: 'open',
+            ai_reply_count: 0,
+            ai_autoreply_disabled: false,
+            ai_handoff_summary: null,
+          }
+        : {}),
     })
     .eq('id', conversation.id)
 
@@ -880,6 +890,7 @@ async function processMessage(
   if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
     await dispatchInboundToAiReply({
       accountId,
+      channelId,
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,

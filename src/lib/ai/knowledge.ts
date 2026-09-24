@@ -2,6 +2,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AiConfig } from './types'
 import { chunkText } from './chunk'
 import { embedTexts, toVectorLiteral } from './embeddings'
+import { aiKnowledgeFullContextChars } from './defaults'
+
+/** Upper bound on chunks loaded by the "small KB, send it all" path. */
+const FULL_KB_MAX_CHUNKS = 24
 
 // ============================================================
 // Knowledge base: ingest (chunk + optionally embed) and hybrid
@@ -75,6 +79,10 @@ export async function ingestDocument(
 /**
  * Retrieve up to `k` knowledge excerpts relevant to `queryText`.
  *
+ * When the whole KB fits the full-context budget
+ * (`aiKnowledgeFullContextChars`), every chunk is returned instead and
+ * `k` doesn't apply.
+ *
  * Semantic-primary when an embeddings key is configured (embed the
  * query → cosine-nearest chunks), then topped up with lexical full-text
  * matches to fill `k`. Lexical-only when there's no key. Best-effort:
@@ -95,14 +103,42 @@ export async function retrieveKnowledge(
   // every draft / auto-reply would pay for a query embedding + two RPCs
   // just to get []. One cheap indexed COUNT (head, no rows) instead of a
   // paid embeddings call on the hot path.
+  let chunkCount = 0
   try {
     const { count, error } = await db
       .from('ai_knowledge_chunks')
       .select('id', { count: 'exact', head: true })
       .eq('account_id', accountId)
     if (error || !count) return []
+    chunkCount = count
   } catch {
     return []
+  }
+
+  // Small knowledge base → hand the model all of it. Retrieval only earns
+  // its keep on a KB too big to fit in the prompt; on a few pages of
+  // business facts it mostly misses (the lexical path ANDs every word of
+  // the customer's message, so "hola, cuánto cuesta el plan sueño?"
+  // matches nothing) and the model then hands off a question the KB
+  // answers.
+  const fullBudget = aiKnowledgeFullContextChars()
+  if (fullBudget > 0 && chunkCount <= FULL_KB_MAX_CHUNKS) {
+    try {
+      const { data, error } = await db
+        .from('ai_knowledge_chunks')
+        .select('content')
+        .eq('account_id', accountId)
+        .order('document_id', { ascending: true })
+        .order('chunk_index', { ascending: true })
+        .limit(FULL_KB_MAX_CHUNKS)
+      if (!error && Array.isArray(data) && data.length > 0) {
+        const all = (data as { content: string }[]).map((r) => r.content)
+        const total = all.reduce((sum, c) => sum + c.length, 0)
+        if (total <= fullBudget) return all
+      }
+    } catch (err) {
+      console.error('[ai knowledge] full-KB load failed, falling back to retrieval:', err)
+    }
   }
 
   const picked = new Map<string, string>() // id → content, preserves order

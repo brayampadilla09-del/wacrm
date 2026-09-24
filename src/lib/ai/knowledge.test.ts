@@ -13,6 +13,8 @@ interface FakeState {
   semantic: { id: string; content: string }[]
   fts: { id: string; content: string }[]
   chunkCount: number
+  /** Rows for the small-KB "load everything" query; null = that query errors. */
+  allChunks: { content: string }[] | null
   rpcCalls: string[]
   inserted: Record<string, unknown>[] | null
   deletedFor: string | null
@@ -23,6 +25,7 @@ function makeDb() {
     semantic: [],
     fts: [],
     chunkCount: 5, // account has a non-empty KB by default
+    allChunks: null, // full-KB load unavailable → retrieval path, by default
     rpcCalls: [],
     inserted: null,
     deletedFor: null,
@@ -37,10 +40,22 @@ function makeDb() {
       return Promise.resolve({ data: null, error: null })
     },
     from: () => ({
-      // retrieveKnowledge's empty-KB count guard.
-      select: () => ({
-        eq: () => Promise.resolve({ count: state.chunkCount, error: null }),
-      }),
+      select: (_cols: string, opts?: { head?: boolean }) => {
+        // retrieveKnowledge's empty-KB count guard.
+        if (opts?.head) {
+          return { eq: () => Promise.resolve({ count: state.chunkCount, error: null }) }
+        }
+        // The small-KB full load: .eq().order().order().limit().
+        const result = state.allChunks
+          ? { data: state.allChunks, error: null }
+          : { data: null, error: { message: 'unavailable' } }
+        const chain = {
+          eq: () => chain,
+          order: () => chain,
+          limit: () => Promise.resolve(result),
+        }
+        return chain
+      },
       delete: () => ({
         eq: (_col: string, val: string) => {
           state.deletedFor = val
@@ -77,6 +92,24 @@ describe('retrieveKnowledge', () => {
     expect(out).toEqual([])
     expect(h.embedTexts).not.toHaveBeenCalled()
     expect(state.rpcCalls).toEqual([])
+  })
+
+  it('returns the whole KB, in order, when it fits the full-context budget', async () => {
+    const { db, state } = makeDb()
+    state.allChunks = [{ content: 'Planes' }, { content: 'Horarios' }]
+    const out = await retrieveKnowledge(db, 'acct', { embeddingsApiKey: 'sk-x' }, 'cuánto cuesta?', 1)
+    expect(out).toEqual(['Planes', 'Horarios'])
+    expect(state.rpcCalls).toEqual([])
+    expect(h.embedTexts).not.toHaveBeenCalled()
+  })
+
+  it('falls back to retrieval when the KB is over the full-context budget', async () => {
+    const { db, state } = makeDb()
+    state.allChunks = [{ content: 'x'.repeat(30_000) }]
+    state.fts = [{ id: 'f1', content: 'F1' }]
+    const out = await retrieveKnowledge(db, 'acct', { embeddingsApiKey: null }, 'q')
+    expect(out).toEqual(['F1'])
+    expect(state.rpcCalls).toEqual(['match_ai_knowledge_fts'])
   })
 
   it('uses lexical FTS only when there is no embeddings key', async () => {

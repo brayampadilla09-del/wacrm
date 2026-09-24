@@ -45,6 +45,10 @@ import {
   classifyMenuOptionIntent,
   classifyCancelIntent,
 } from "./ai-router";
+import { assistOffScriptReply } from "./ai-assist";
+import { recordHandoffSummary } from "@/lib/ai/summary";
+import type { HandoffReason } from "@/lib/ai/handoff";
+import type { FlowStepContext } from "@/lib/ai/defaults";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { isDeliverableUrl } from "@/lib/webhooks/ssrf";
@@ -55,6 +59,7 @@ import {
   type DispatchInboundResult,
   type FlowNodeRow,
   type FlowRow,
+  type FlowFallbackPolicy,
   type FlowRunRow,
   type HttpFetchNodeConfig,
   type ParsedInbound,
@@ -288,6 +293,27 @@ export function matchesKeywordTrigger(
     }
   }
   return false;
+}
+
+/**
+ * True when a message typed while a run waits on a menu is an explicit
+ * "start over": a short message (at most 3 words) that IS one of the
+ * flow's trigger keywords or starts with one ("hola", "hola bimi",
+ * "menú por favor"). The restart check used the entry trigger's
+ * contains-match, which restarted runs on ordinary answers that merely
+ * mention a keyword: "Sí, confirmo la cita" matched "cita" and threw
+ * away a booking at its confirmation step.
+ */
+export function isExplicitRestartRequest(
+  text: string,
+  keywords: string[] | undefined,
+): boolean {
+  const needle = normalizeText(text);
+  if (!needle || needle.split(" ").length > 3) return false;
+  return (keywords ?? []).some((raw) => {
+    const keyword = normalizeText(raw ?? "");
+    return !!keyword && (needle === keyword || needle.startsWith(`${keyword} `));
+  });
 }
 
 /**
@@ -559,6 +585,28 @@ async function isDuplicateInbound(
 }
 
 /**
+ * True when a person typed in this conversation within
+ * HUMAN_TAKEOVER_WINDOW_MS (templates excluded: pagina-estudio's API
+ * sends are always templates). Shared with the AI auto-reply, which
+ * must stay out of a thread an agent is working just like a new flow
+ * run does.
+ */
+export async function hasRecentAgentMessage(
+  db: AdminClient,
+  conversationId: string,
+): Promise<boolean> {
+  const since = new Date(Date.now() - HUMAN_TAKEOVER_WINDOW_MS).toISOString();
+  const { count } = await db
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("sender_type", "agent")
+    .neq("content_type", "template")
+    .gte("created_at", since);
+  return (count ?? 0) > 0;
+}
+
+/**
  * True when a person owns this conversation right now, so a new flow
  * run must not start (an active run is already paused the moment an
  * agent sends, see send-message.ts — this covers the *next* inbound,
@@ -584,16 +632,7 @@ async function isHumanHandlingConversation(
     .maybeSingle();
   const status = (conv as { status?: string } | null)?.status;
 
-  const since = new Date(Date.now() - HUMAN_TAKEOVER_WINDOW_MS).toISOString();
-
-  const { count: agentMessages } = await db
-    .from("messages")
-    .select("id", { count: "exact", head: true })
-    .eq("conversation_id", conversationId)
-    .eq("sender_type", "agent")
-    .neq("content_type", "template")
-    .gte("created_at", since);
-  if ((agentMessages ?? 0) > 0) return true;
+  if (await hasRecentAgentMessage(db, conversationId)) return true;
 
   if (status === "pending") {
     const { data: lastRun } = await db
@@ -614,6 +653,39 @@ async function isHumanHandlingConversation(
     }
   }
   return false;
+}
+
+/**
+ * The active keyword-triggered flow on this channel whose keywords the
+ * message explicitly restarts with (see isExplicitRestartRequest), or
+ * null. Deterministic on purpose: no AI intent classifier here.
+ */
+async function findExplicitRestartFlow(
+  db: AdminClient,
+  accountId: string,
+  channelId: string,
+  text: string,
+): Promise<FlowRow | null> {
+  const { data: flows, error } = await db
+    .from("flows")
+    .select("*")
+    .eq("account_id", accountId)
+    .eq("channel_id", channelId)
+    .eq("status", "active")
+    .eq("trigger_type", "keyword")
+    .order("created_at", { ascending: true });
+  if (error || !flows) return null;
+  for (const flow of flows as FlowRow[]) {
+    const cfg = flow.trigger_config as KeywordTriggerConfig;
+    if (isExplicitRestartRequest(text, cfg.keywords)) return flow;
+  }
+  return null;
+}
+
+/** A typed answer that reads as a question rather than the data a
+ *  collect_input step asked for ("¿para qué necesitan mi correo?"). */
+export function looksLikeQuestion(text: string): boolean {
+  return /[?¿]/.test(text);
 }
 
 async function findEntryFlow(
@@ -831,14 +903,65 @@ async function sendListAndSuspend(
   return { outcome: "advanced", node_key: node.node_key };
 }
 
+/**
+ * In-memory run var carrying WHY an automatic handoff was routed
+ * through the flow's handoff path (see `routeToHandoff`), so the
+ * `handoff` node at the end of that path can label the team's summary.
+ * Leading underscore: internal, never shown as captured data.
+ */
+const HANDOFF_REASON_VAR = "_handoff_reason";
+
+const HANDOFF_REASONS: HandoffReason[] = [
+  "flow_node",
+  "flow_fallback",
+  "ai_unsure",
+  "ai_limit",
+  "manual",
+];
+
+function handoffReasonOf(run: FlowRunRow): HandoffReason {
+  const raw = run.vars?.[HANDOFF_REASON_VAR];
+  return HANDOFF_REASONS.includes(raw as HandoffReason)
+    ? (raw as HandoffReason)
+    : "flow_node";
+}
+
+/**
+ * Leave a summary for the team on a conversation that just left the
+ * bot (inbox banner + contact note). Best-effort: `recordHandoffSummary`
+ * never throws, and a missing conversation/contact just skips it.
+ */
+async function summarizeHandoff(
+  db: AdminClient,
+  run: FlowRunRow,
+  reason: HandoffReason,
+  note: string | null,
+): Promise<void> {
+  if (!run.conversation_id || !run.contact_id) return;
+  await recordHandoffSummary(db, {
+    accountId: run.account_id,
+    conversationId: run.conversation_id,
+    contactId: run.contact_id,
+    authorUserId: run.user_id,
+    reason,
+    vars: run.vars,
+    note,
+  });
+}
+
 async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
 ): Promise<void> {
   const cfg = node.config as { assign_to?: string; note?: string };
+  const reason = handoffReasonOf(run);
   const convUpdate: Record<string, unknown> = {
     status: "pending",
+    // The team owns the thread now: keep the AI auto-reply out of it
+    // until someone resumes it, closes the conversation, or a new flow
+    // run starts (see resetConversationAiState).
+    ai_autoreply_disabled: true,
     updated_at: new Date().toISOString(),
   };
   if (cfg.assign_to) convUpdate.assigned_agent_id = cfg.assign_to;
@@ -851,8 +974,182 @@ async function executeHandoff(
   await logEvent(db, run.id, "handoff", node.node_key, {
     note: cfg.note ?? null,
     assigned_to: cfg.assign_to ?? null,
+    reason,
   });
   await endRun(db, run.id, "handed_off", "handoff_node");
+  // The node's note describes the path that leads to it (e.g. "the
+  // customer asked for an advisor"); automatic handoffs reuse the same
+  // path for its customer message, so the note would mislabel them.
+  await summarizeHandoff(db, run, reason, reason === "flow_node" ? (cfg.note ?? null) : null);
+}
+
+/**
+ * Hand an active run's conversation to the team for an automatic
+ * reason (reprompts exhausted, AI unsure, AI budget spent). Routes
+ * through the flow's `fallback_policy.handoff_node_key` when set, so
+ * the customer is told what happens next; otherwise falls back to the
+ * silent flip to `pending`, still leaving the team a summary.
+ */
+async function routeToHandoff(
+  db: AdminClient,
+  run: FlowRunRow,
+  nodes: Map<string, FlowNodeRow>,
+  policy: FlowFallbackPolicy,
+  reason: HandoffReason,
+): Promise<DispatchInboundResult> {
+  run.vars = { ...run.vars, [HANDOFF_REASON_VAR]: reason };
+  const key = policy.handoff_node_key;
+  if (key && nodes.has(key)) {
+    await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
+      action: "handoff_path",
+      reason,
+      handoff_node_key: key,
+    });
+    const outcome = await advanceFromNodeKey(db, run, key, nodes);
+    return {
+      consumed: true,
+      flow_run_id: run.id,
+      outcome: outcome.outcome === "advanced" ? "fallback_fired" : outcome.outcome,
+    };
+  }
+
+  if (run.conversation_id) {
+    await db
+      .from("conversations")
+      .update({
+        status: "pending",
+        ai_autoreply_disabled: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", run.conversation_id);
+  }
+  await logEvent(db, run.id, "handoff", run.current_node_key, { reason });
+  await endRun(
+    db,
+    run.id,
+    "handed_off",
+    reason === "flow_fallback" ? "fallback_exhausted" : reason,
+  );
+  await summarizeHandoff(db, run, reason, null);
+  return { consumed: true, flow_run_id: run.id, outcome: "handed_off" };
+}
+
+/**
+ * A new flow run means the bot owns the conversation again: give the
+ * AI a fresh reply budget and lift a pause left by an earlier handoff
+ * (a person handling it blocks new runs in the first place, see
+ * isHumanHandlingConversation).
+ */
+async function resetConversationAiState(
+  db: AdminClient,
+  conversationId: string,
+): Promise<void> {
+  const { error } = await db
+    .from("conversations")
+    .update({
+      ai_reply_count: 0,
+      ai_autoreply_disabled: false,
+      ai_handoff_summary: null,
+    })
+    .eq("id", conversationId);
+  if (error) console.error("[flows] reset AI state failed:", error.message);
+}
+
+type RunContact = { phone?: string; name?: string; email?: string; full_name?: string };
+
+/** Contact fields `interpolateVars` reads, for a run's contact. */
+async function loadRunContact(
+  db: AdminClient,
+  run: FlowRunRow,
+): Promise<RunContact | undefined> {
+  if (!run.contact_id) return undefined;
+  const { data } = await db
+    .from("contacts")
+    .select("phone, name, email, full_name")
+    .eq("id", run.contact_id)
+    .maybeSingle();
+  return data
+    ? { phone: data.phone, name: data.name, email: data.email, full_name: data.full_name }
+    : undefined;
+}
+
+/**
+ * Options offered by a send_buttons/send_list step, including the rows
+ * of a dynamic list (resolved from the vars the list was built from),
+ * so both the option classifier and the AI assist see what the
+ * customer actually has on screen.
+ */
+function stepOptions(
+  node: FlowNodeRow,
+  vars: Record<string, unknown>,
+): { reply_id: string; title: string; description?: string }[] {
+  if (node.node_type === "send_list") {
+    const cfg = node.config as unknown as SendListNodeConfig;
+    if (cfg.dynamic) {
+      return resolveVarArray(vars, cfg.dynamic.rows_var).map((r) => ({
+        reply_id: r.id,
+        title: r.title,
+        description: r.description,
+      }));
+    }
+  }
+  return collectNodeOptions(node);
+}
+
+/** What the step asked + what it offered, for `flow_assist` mode. */
+function describeStep(
+  node: FlowNodeRow,
+  vars: Record<string, unknown>,
+  contact: RunContact | undefined,
+): FlowStepContext {
+  if (node.node_type === "collect_input") {
+    const cfg = node.config as unknown as CollectInputNodeConfig;
+    return {
+      prompt: interpolateVars(cfg.prompt_text ?? "", vars, contact),
+      expects: "text",
+      options: [],
+    };
+  }
+  const cfg = node.config as { text?: string };
+  return {
+    prompt: interpolateVars(cfg.text ?? "", vars, contact),
+    expects: "choice",
+    options: stepOptions(node, vars).map((o) => o.title),
+  };
+}
+
+/**
+ * Re-send the step the run is suspended on (after a clarification or an
+ * AI answer) without moving `current_node_key`. Send failures are
+ * logged, not thrown: the run stays where it was either way.
+ */
+async function resendStep(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  contact: RunContact | undefined,
+): Promise<void> {
+  try {
+    if (node.node_type === "send_buttons") {
+      await sendButtonsAndSuspend(db, run, node, contact);
+    } else if (node.node_type === "send_list") {
+      await sendListAndSuspend(db, run, node, contact);
+    } else if (node.node_type === "collect_input") {
+      const cfg = node.config as unknown as CollectInputNodeConfig;
+      await engineSendText({
+        accountId: run.account_id,
+        userId: run.user_id,
+        conversationId: run.conversation_id!,
+        contactId: run.contact_id!,
+        text: interpolateVars(cfg.prompt_text, run.vars, contact),
+      });
+    }
+  } catch (err) {
+    await logEvent(db, run.id, "error", node.node_key, {
+      reason: "reprompt_send_failed",
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -1514,6 +1811,101 @@ export async function dispatchInboundToFlows(
   }
 }
 
+/**
+ * Hand a conversation with NO active run to the team — the out-of-flow
+ * AI auto-reply's exit when the model can't answer or the thread used
+ * its AI reply budget (`src/lib/ai/auto-reply.ts`).
+ *
+ * Reuses the channel flow's handoff path (`fallback_policy.
+ * handoff_node_key`, e.g. "te paso con el equipo, escríbenos aquí…" →
+ * `handoff` node) through a short run that starts at that node, so the
+ * customer gets the same message as any other handoff and the team the
+ * same summary. Without such a flow the thread just goes to `pending`
+ * with a summary, nothing sent.
+ *
+ * Idempotent per episode: the atomic flip of `ai_autoreply_disabled`
+ * means two concurrent inbounds can't both send the handoff message.
+ * Never throws.
+ */
+export async function handOffConversationToHuman(args: {
+  accountId: string;
+  channelId: string;
+  contactId: string;
+  conversationId: string;
+  /** Fallback author for the summary note when no flow is involved. */
+  configOwnerUserId: string;
+  reason: HandoffReason;
+}): Promise<void> {
+  const db = supabaseAdmin();
+  const { accountId, channelId, contactId, conversationId, reason } = args;
+  try {
+    const { data: claimed, error: claimErr } = await db
+      .from("conversations")
+      .update({ ai_autoreply_disabled: true })
+      .eq("id", conversationId)
+      .eq("ai_autoreply_disabled", false)
+      .select("id");
+    if (claimErr || !claimed || claimed.length === 0) return;
+
+    const { data: flows } = await db
+      .from("flows")
+      .select("*")
+      .eq("account_id", accountId)
+      .eq("channel_id", channelId)
+      .eq("status", "active")
+      .order("created_at", { ascending: true });
+    for (const flow of (flows ?? []) as FlowRow[]) {
+      const key = resolveFallbackPolicy(flow.fallback_policy).handoff_node_key;
+      if (!key) continue;
+      const nodes = await loadAllNodes(db, flow.id);
+      if (!nodes.has(key)) continue;
+      const { data: inserted, error: insErr } = await db
+        .from("flow_runs")
+        .insert({
+          flow_id: flow.id,
+          account_id: flow.account_id,
+          channel_id: flow.channel_id,
+          user_id: flow.user_id,
+          contact_id: contactId,
+          conversation_id: conversationId,
+          status: "active",
+          current_node_key: key,
+          vars: { [HANDOFF_REASON_VAR]: reason },
+        })
+        .select("*")
+        .maybeSingle();
+      // 23505 = a run became active meanwhile; fall through to the
+      // plain handoff below rather than fight it.
+      if (insErr || !inserted) break;
+      const run = inserted as FlowRunRow;
+      await logEvent(db, run.id, "started", key, {
+        flow_id: flow.id,
+        trigger_type: "ai_handoff",
+        reason,
+      });
+      await advanceFromNodeKey(db, run, key, nodes);
+      return;
+    }
+
+    await db
+      .from("conversations")
+      .update({ status: "pending", updated_at: new Date().toISOString() })
+      .eq("id", conversationId);
+    await recordHandoffSummary(db, {
+      accountId,
+      conversationId,
+      contactId,
+      authorUserId: args.configOwnerUserId,
+      reason,
+    });
+  } catch (err) {
+    console.error(
+      "[flows] handOffConversationToHuman failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 async function handleReplyForActiveRun(
   db: AdminClient,
   run: FlowRunRow,
@@ -1624,7 +2016,7 @@ async function handleReplyForActiveRun(
       run.account_id,
       message.text,
       [
-        ...collectNodeOptions(currentNode),
+        ...stepOptions(currentNode, run.vars),
         {
           reply_id: CANCEL_REPLY_ID,
           title: "Cancelar",
@@ -1773,15 +2165,16 @@ async function handleReplyForActiveRun(
 
   // Antes de aplicar la política de fallback: si el contacto quedó "colgado"
   // en un nodo de botones/lista (típicamente anything_else, esperando un tap
-  // que nunca llega) y ahora escribe una palabra de arranque ("hola", "menu",
-  // etc.), lo tratamos como un pedido explícito de reiniciar la conversación
-  // en vez de solo re-mostrar las mismas opciones con un "no entiendo" — sin
-  // esto, cualquier active run viejo bloquea el trigger por keyword de
-  // dispatchInboundToFlows indefinidamente (hasta el timeout de 24h del
-  // cron), porque loadActiveRunForContact siempre gana primero. Solo aplica
-  // en send_buttons/send_list: un collect_input ya acepta cualquier texto
-  // como respuesta válida, así que nunca llega a este fallback por texto no
-  // vacío.
+  // que nunca llega) y ahora escribe un saludo o "menú", lo tratamos como un
+  // pedido explícito de reiniciar la conversación en vez de solo re-mostrar
+  // las mismas opciones — sin esto, cualquier active run viejo bloquea el
+  // trigger por keyword de dispatchInboundToFlows indefinidamente (hasta el
+  // timeout de 24h del cron), porque loadActiveRunForContact siempre gana
+  // primero. Solo cuenta un mensaje corto que ES la keyword o empieza por
+  // ella (isExplicitRestartRequest): con el contains-match del trigger,
+  // "Sí, confirmo la cita" reiniciaba el flujo en plena confirmación. Y es
+  // determinístico a propósito (sin el clasificador de IA de findEntryFlow),
+  // porque la IA leía cualquier pregunta como "quiere el menú".
   //
   // Cooldown: cada restart termina el run activo y llama startNewRun, que
   // corre el advance loop entero desde cero (incluyendo cualquier
@@ -1792,7 +2185,12 @@ async function handleReplyForActiveRun(
   // siempre refresca — así que no hace falta una columna ni consulta nueva.
   const runAgeMs = Date.now() - new Date(run.started_at).getTime();
   if (message.kind === "text" && isButtonNode && runAgeMs >= RESTART_COOLDOWN_MS) {
-    const restartFlow = await findEntryFlow(db, run.account_id, run.channel_id, message, false);
+    const restartFlow = await findExplicitRestartFlow(
+      db,
+      run.account_id,
+      run.channel_id,
+      message.text,
+    );
     if (restartFlow?.entry_node_id) {
       await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
         action: "restarted_by_keyword",
@@ -1816,10 +2214,47 @@ async function handleReplyForActiveRun(
     }
   }
 
-  // No match → fallback. Apply the policy.
   const policy = resolveFallbackPolicy(
     (await loadFlow(db, run.flow_id))?.fallback_policy,
   );
+  // Same contact lookup as advanceFromNodeKey's — needed so a re-sent
+  // step's {{contact.x}} interpolates the same as the first send did.
+  const contact = await loadRunContact(db, run);
+
+  // Off-script text nothing above could place: a question or comment
+  // ("¿cuánto cuesta el plan Sueño?" on the main menu, "¿para qué el
+  // correo?" when asked for an email). The AI answers it and the same
+  // step goes out again, or — when it can't answer, or this thread
+  // already used its AI reply budget — the conversation goes to the team
+  // instead of the bot looping on "no entendí". No-op (falls through to
+  // the policy below) when AI replies are off. See ai-assist.ts.
+  const isAside =
+    message.kind === "text" &&
+    message.text.trim().length > 0 &&
+    (isButtonNode ||
+      (currentNode.node_type === "collect_input" && looksLikeQuestion(message.text)));
+  if (isAside && run.conversation_id && run.contact_id) {
+    const assist = await assistOffScriptReply(db, {
+      accountId: run.account_id,
+      userId: run.user_id,
+      conversationId: run.conversation_id,
+      contactId: run.contact_id,
+      text: (message as { text: string }).text,
+      step: describeStep(currentNode, run.vars, contact),
+    });
+    if (assist.type === "answered") {
+      await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
+        action: "ai_answered",
+      });
+      await resendStep(db, run, currentNode, contact);
+      return { consumed: true, flow_run_id: run.id, outcome: "fallback_fired" };
+    }
+    if (assist.type === "handoff") {
+      return routeToHandoff(db, run, nodes, policy, assist.reason);
+    }
+  }
+
+  // No match → fallback. Apply the policy.
   const newReprompts = run.reprompt_count + 1;
   await db
     .from("flow_runs")
@@ -1836,18 +2271,6 @@ async function handleReplyForActiveRun(
     return { consumed: false, flow_run_id: run.id, outcome: "no_match" };
   }
   if (action.type === "reprompt") {
-    // Same contact lookup as advanceFromNodeKey's — needed so a reprompt's
-    // {{contact.x}} interpolates the same as the first send did.
-    let contact: { phone?: string; name?: string; email?: string; full_name?: string } | undefined;
-    if (run.contact_id) {
-      const { data } = await db
-        .from("contacts")
-        .select("phone, name, email, full_name")
-        .eq("id", run.contact_id)
-        .maybeSingle();
-      if (data) contact = { phone: data.phone, name: data.name, email: data.email, full_name: data.full_name };
-    }
-
     // Antes de reenviar las opciones/el prompt, aclaramos que no aceptamos
     // el mensaje libre que mandaron — sin esto, quien le escribe al bot
     // como si fuera una persona solo ve las mismas opciones de nuevo, sin
@@ -1878,63 +2301,16 @@ async function handleReplyForActiveRun(
     }
 
     // Re-send the same prompt. Same node, no current_node_key change.
-    if (currentNode.node_type === "send_buttons") {
-      try {
-        await sendButtonsAndSuspend(db, run, currentNode, contact);
-      } catch (err) {
-        await logEvent(db, run.id, "error", currentNode.node_key, {
-          reason: "reprompt_send_failed",
-          detail: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } else if (currentNode.node_type === "send_list") {
-      try {
-        await sendListAndSuspend(db, run, currentNode, contact);
-      } catch (err) {
-        await logEvent(db, run.id, "error", currentNode.node_key, {
-          reason: "reprompt_send_failed",
-          detail: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } else if (currentNode.node_type === "collect_input") {
-      // Customer typed something we couldn't accept (empty after trim,
-      // or var_key missing — rare). Re-send the prompt so they try again.
-      const cfg = currentNode.config as unknown as CollectInputNodeConfig;
-      try {
-        await engineSendText({
-          accountId: run.account_id,
-    userId: run.user_id,
-          conversationId: run.conversation_id!,
-          contactId: run.contact_id!,
-          text: interpolateVars(cfg.prompt_text, run.vars, contact),
-        });
-      } catch (err) {
-        await logEvent(db, run.id, "error", currentNode.node_key, {
-          reason: "reprompt_send_failed",
-          detail: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    await resendStep(db, run, currentNode, contact);
     return { consumed: true, flow_run_id: run.id, outcome: "fallback_fired" };
   }
   if (action.type === "handoff") {
-    if (run.conversation_id) {
-      await db
-        .from("conversations")
-        .update({ status: "pending", updated_at: new Date().toISOString() })
-        .eq("id", run.conversation_id);
-    }
-    await logEvent(db, run.id, "handoff", run.current_node_key, {
-      reason: "fallback_exhausted",
-    });
-    await endRun(db, run.id, "handed_off", "fallback_exhausted");
-    return { consumed: true, flow_run_id: run.id, outcome: "handed_off" };
+    return routeToHandoff(db, run, nodes, policy, "flow_fallback");
   }
   // action.type === 'end'
   await endRun(db, run.id, "completed", "fallback_exhausted_end");
   return { consumed: true, flow_run_id: run.id, outcome: "completed" };
 }
-
 async function startNewRun(
   db: AdminClient,
   flow: FlowRow,
@@ -1974,6 +2350,9 @@ async function startNewRun(
     return { consumed: false, outcome: "no_match" };
   }
   const run = inserted as FlowRunRow;
+  if (input.conversationId) {
+    await resetConversationAiState(db, input.conversationId);
+  }
   await logEvent(db, run.id, "started", flow.entry_node_id, {
     flow_id: flow.id,
     trigger_type: flow.trigger_type,

@@ -281,7 +281,13 @@
       "tookOver": "You’ve taken over this chat.",
       "resumed": "AI resumed.",
       "updateError": "Couldn’t update the AI assistant.",
-      "networkError": "Couldn’t reach the server."
+      "networkError": "Couldn’t reach the server.",
+      "summarize": "Summarize",
+      "summaryTitle": "Conversation summary",
+      "summaryHint": "AI summary of what the customer wants and what the bot captured",
+      "summaryError": "Couldn’t summarize this conversation.",
+      "showMore": "Show more",
+      "showLess": "Show less"
     }
   },
   "Contacts": {

@@ -1,36 +1,28 @@
 import { describe, it, expect } from 'vitest'
-import { buildHandoffSummary } from './handoff'
+import { buildHandoffSummary, describeFlowVars } from './handoff'
 
 describe('buildHandoffSummary', () => {
-  it('notes the reply count and quotes the last customer message', () => {
+  it('states the reason and quotes the last customer message', () => {
     const summary = buildHandoffSummary({
       messages: [
-        { role: 'user', content: 'Hi' },
-        { role: 'assistant', content: 'Hello! How can I help?' },
-        { role: 'user', content: 'I want a refund' },
+        { role: 'user', content: 'Hola' },
+        { role: 'assistant', content: '¡Hola! ¿En qué te ayudo?' },
+        { role: 'user', content: 'quiero un reembolso' },
       ],
-      replyCount: 2,
+      reason: 'ai_unsure',
     })
     expect(summary).toBe(
-      '🤖 AI agent handed off after 2 replies. Last customer message: “I want a refund”',
+      '🤖 Pasó al equipo: la IA no tenía cómo responder con certeza.\nÚltimo mensaje del cliente: “quiero un reembolso”',
     )
   })
 
-  it('uses the singular "reply" for a count of one', () => {
+  it('lists the scalar flow answers', () => {
     const summary = buildHandoffSummary({
-      messages: [{ role: 'user', content: 'help' }],
-      replyCount: 1,
+      messages: [{ role: 'user', content: 'no entiendo' }],
+      reason: 'flow_fallback',
+      vars: { space_type: 'Residencial', color_choice: 'Neutros y cálidos' },
     })
-    expect(summary).toContain('after 1 reply.')
-  })
-
-  it('says "without replying" when the bot bailed on the first inbound', () => {
-    const summary = buildHandoffSummary({
-      messages: [{ role: 'user', content: 'agent please' }],
-      replyCount: 0,
-    })
-    expect(summary).toContain('handed off without replying.')
-    expect(summary).toContain('“agent please”')
+    expect(summary).toContain('Datos del flujo: space_type: Residencial · color_choice: Neutros y cálidos.')
   })
 
   it('picks the most recent customer turn, ignoring assistant turns', () => {
@@ -40,7 +32,7 @@ describe('buildHandoffSummary', () => {
         { role: 'user', content: 'second' },
         { role: 'assistant', content: 'a reply' },
       ],
-      replyCount: 1,
+      reason: 'ai_limit',
     })
     expect(summary).toContain('“second”')
   })
@@ -49,7 +41,7 @@ describe('buildHandoffSummary', () => {
     const long = 'x'.repeat(300)
     const summary = buildHandoffSummary({
       messages: [{ role: 'user', content: long }],
-      replyCount: 0,
+      reason: 'flow_node',
     })
     expect(summary).toContain('…')
     // 160-char cap on the quote; the whole note stays well under 250.
@@ -59,8 +51,27 @@ describe('buildHandoffSummary', () => {
   it('degrades gracefully when there is no customer message', () => {
     const summary = buildHandoffSummary({
       messages: [{ role: 'assistant', content: 'greeting' }],
-      replyCount: 0,
+      reason: 'flow_node',
     })
-    expect(summary).toBe('🤖 AI agent handed off without replying.')
+    expect(summary).toBe('🤖 Pasó al equipo: el flujo lo pasó al equipo.')
+  })
+})
+
+describe('describeFlowVars', () => {
+  it('keeps scalars and drops internal keys and fetched payloads', () => {
+    expect(
+      describeFlowVars({
+        space_type: 'Oficina',
+        _returning: 'true',
+        avail: { options: [{ id: 'a', title: 'b' }] },
+        rows: ['x'],
+        count: 3,
+        empty: '  ',
+      }),
+    ).toEqual(['space_type: Oficina', 'count: 3'])
+  })
+
+  it('returns [] for missing vars', () => {
+    expect(describeFlowVars(null)).toEqual([])
   })
 })

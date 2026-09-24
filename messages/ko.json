@@ -281,7 +281,13 @@
       "tookOver": "이 대화를 직접 처리하기 시작했습니다.",
       "resumed": "AI가 재개되었습니다.",
       "updateError": "AI 어시스턴트를 업데이트하지 못했습니다.",
-      "networkError": "서버에 연결할 수 없습니다."
+      "networkError": "서버에 연결할 수 없습니다.",
+      "summarize": "요약",
+      "summaryTitle": "대화 요약",
+      "summaryHint": "고객이 원하는 것과 봇이 수집한 내용의 AI 요약",
+      "summaryError": "이 대화를 요약하지 못했습니다.",
+      "showMore": "더 보기",
+      "showLess": "접기"
     }
   },
   "Contacts": {

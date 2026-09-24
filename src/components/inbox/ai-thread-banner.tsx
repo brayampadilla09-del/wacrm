@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Sparkles, Hand, Undo2, Loader2 } from "lucide-react";
+import { Sparkles, Hand, Undo2, Loader2, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
@@ -19,6 +19,9 @@ import { useAuth } from "@/hooks/use-auth";
 // banner for the whole session.
 // ------------------------------------------------------------
 interface AiAccountStatus {
+  /** Configured + master switch on: summaries (and drafts) work. */
+  aiOn: boolean;
+  /** …and the inbound auto-reply bot is enabled too. */
   autoReplyOn: boolean;
 }
 const statusCache = new Map<string, AiAccountStatus>();
@@ -28,17 +31,19 @@ async function fetchAiAccountStatus(accountId: string): Promise<AiAccountStatus>
   if (cached) return cached;
   try {
     const res = await fetch("/api/ai/config", { cache: "no-store" });
-    if (!res.ok) return { autoReplyOn: false }; // don't cache a transient failure
+    if (!res.ok) return { aiOn: false, autoReplyOn: false }; // don't cache a transient failure
     const j = await res.json();
+    const aiOn = !!(j?.configured && j?.is_active);
     const status = {
+      aiOn,
       // AI auto-reply is "live" only when configured, the master switch
       // is on, and the inbound bot is enabled.
-      autoReplyOn: !!(j?.configured && j?.is_active && j?.auto_reply_enabled),
+      autoReplyOn: aiOn && !!j?.auto_reply_enabled,
     };
     statusCache.set(accountId, status);
     return status;
   } catch {
-    return { autoReplyOn: false }; // don't cache
+    return { aiOn: false, autoReplyOn: false }; // don't cache
   }
 }
 
@@ -46,7 +51,8 @@ interface AiThreadBannerProps {
   conversationId: string;
   /** `conversations.ai_autoreply_disabled` — bot paused on this thread. */
   disabled: boolean;
-  /** `conversations.ai_handoff_summary` — note the bot left on handoff. */
+  /** `conversations.ai_handoff_summary` — summary the bot left on
+   *  handoff, or the last one an agent asked for. */
   handoffSummary?: string | null;
   /** Current assignee; when a human owns the thread the bot won't run,
    *  so the "AI active" banner is suppressed. */
@@ -63,12 +69,12 @@ interface AiThreadBannerProps {
 }
 
 /**
- * Inbox banner that surfaces + controls the AI auto-reply bot per
- * conversation:
+ * Inbox banner that surfaces + controls the AI on a conversation:
+ *   - the conversation summary (left by the bot on handoff, or asked
+ *     for with [Summarize]), collapsed to two lines, expandable
  *   - bot active here → "AI is replying automatically" + [Take over]
- *   - bot paused here → the handoff note (if any) + [Resume AI]
- * Renders nothing when the account has no auto-reply configured, or when
- * the bot is active but a human already owns the thread (nothing to do).
+ *   - bot paused here → [Resume AI]
+ * Renders nothing when there's no summary and the account's AI is off.
  */
 export function AiThreadBanner({
   conversationId,
@@ -80,8 +86,15 @@ export function AiThreadBanner({
 }: AiThreadBannerProps) {
   const t = useTranslations("Inbox.aiBanner");
   const { accountId } = useAuth();
-  const [autoReplyOn, setAutoReplyOn] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<AiAccountStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  // Local mirror so a fresh [Summarize] shows instantly; re-seeds from
+  // the prop (realtime UPDATE) and collapses when the thread changes.
+  const [summary, setSummary] = useState(handoffSummary ?? null);
+  useEffect(() => setSummary(handoffSummary ?? null), [conversationId, handoffSummary]);
+  useEffect(() => setExpanded(false), [conversationId]);
   // Optimistic local mirror of the pause flag so the banner flips
   // instantly on click; re-seeds whenever the thread (or its server
   // state via realtime) changes.
@@ -91,7 +104,7 @@ export function AiThreadBanner({
   useEffect(() => {
     if (!accountId) return;
     let alive = true;
-    fetchAiAccountStatus(accountId).then((s) => alive && setAutoReplyOn(s.autoReplyOn));
+    fetchAiAccountStatus(accountId).then((s) => alive && setStatus(s));
     return () => {
       alive = false;
     };
@@ -134,44 +147,109 @@ export function AiThreadBanner({
     [conversationId, currentUserId, onChange, t],
   );
 
-  // Account has no auto-reply → nothing to show. (Still loading → nothing.)
-  if (!autoReplyOn) return null;
+  const summarize = useCallback(async () => {
+    setSummarizing(true);
+    try {
+      const res = await fetch("/api/ai/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: conversationId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || typeof j?.summary !== "string") {
+        toast.error(j?.error ?? t("summaryError"));
+        return;
+      }
+      setSummary(j.summary);
+      setExpanded(true);
+    } catch {
+      toast.error(t("networkError"));
+    } finally {
+      setSummarizing(false);
+    }
+  }, [conversationId, t]);
 
-  // Paused here (a human took over, or the model handed off).
-  if (paused) {
-    return (
+  const aiOn = status?.aiOn ?? false;
+  const autoReplyOn = status?.autoReplyOn ?? false;
+  // Nothing to show: no summary, and the account's AI is off (or the
+  // status is still loading).
+  if (!summary && !aiOn) return null;
+
+  const summarizeButton = aiOn ? (
+    <BannerButton onClick={summarize} busy={summarizing} icon={FileText}>
+      {t("summarize")}
+    </BannerButton>
+  ) : null;
+
+  const summaryBlock = summary ? (
+    <div className="border-b border-border bg-muted/40 px-3 py-2 text-xs sm:px-4">
+      <p className="font-medium text-foreground">{t("summaryTitle")}</p>
+      <p
+        className={cn(
+          "whitespace-pre-line text-muted-foreground",
+          !expanded && "line-clamp-2",
+        )}
+      >
+        {summary}
+      </p>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="mt-0.5 font-medium text-primary hover:underline"
+      >
+        {expanded ? t("showLess") : t("showMore")}
+      </button>
+    </div>
+  ) : null;
+
+  let controls: React.ReactNode;
+  if (autoReplyOn && paused) {
+    // Paused here (a human took over, or the bot handed off).
+    controls = (
       <Banner tone="muted">
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground">{t("pausedTitle")}</p>
-          {handoffSummary && (
-            <p className="truncate text-muted-foreground" title={handoffSummary}>
-              {handoffSummary}
-            </p>
-          )}
-        </div>
+        <p className="min-w-0 flex-1 truncate font-medium text-foreground">
+          {t("pausedTitle")}
+        </p>
+        {summarizeButton}
         <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>
           {t("resume")}
         </BannerButton>
       </Banner>
     );
+  } else if (autoReplyOn && !assignedAgentId) {
+    // Active on this thread.
+    controls = (
+      <Banner tone="primary">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
+          <span className="truncate font-medium text-foreground">
+            {t("activeText")}
+          </span>
+        </div>
+        {summarizeButton}
+        <BannerButton onClick={() => toggle(true)} busy={busy} icon={Hand}>
+          {t("takeOver")}
+        </BannerButton>
+      </Banner>
+    );
+  } else if (summarizeButton) {
+    // No auto-reply controls apply (auto-reply off, or a human owns the
+    // thread) — still offer the summary.
+    controls = (
+      <Banner tone="muted">
+        <p className="min-w-0 flex-1 truncate text-muted-foreground">
+          {t("summaryHint")}
+        </p>
+        {summarizeButton}
+      </Banner>
+    );
   }
 
-  // Active, but a human already owns it → the bot won't fire; no banner.
-  if (assignedAgentId) return null;
-
-  // Active on this thread.
   return (
-    <Banner tone="primary">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
-        <span className="truncate font-medium text-foreground">
-          {t("activeText")}
-        </span>
-      </div>
-      <BannerButton onClick={() => toggle(true)} busy={busy} icon={Hand}>
-        {t("takeOver")}
-      </BannerButton>
-    </Banner>
+    <>
+      {summaryBlock}
+      {controls}
+    </>
   );
 }
 

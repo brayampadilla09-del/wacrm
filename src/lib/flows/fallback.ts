@@ -56,6 +56,9 @@ export function resolveFallbackPolicy(
       r.on_exhaust === "handoff" || r.on_exhaust === "end"
         ? r.on_exhaust
         : DEFAULT_FALLBACK_POLICY.on_exhaust,
+    ...(typeof r.handoff_node_key === "string" && r.handoff_node_key.trim()
+      ? { handoff_node_key: r.handoff_node_key.trim() }
+      : {}),
   };
 }
 

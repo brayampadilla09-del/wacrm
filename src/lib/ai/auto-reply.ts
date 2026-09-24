@@ -4,15 +4,22 @@ import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
-import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
+import {
+  handOffConversationToHuman,
+  hasRecentAgentMessage,
+} from '@/lib/flows/engine'
+import type { HandoffReason } from './handoff'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
   accountId: string
+  /** The WhatsApp number the inbound arrived on — picks which flow's
+   *  handoff path (if any) tells the customer the team takes over. */
+  channelId: string
   conversationId: string
   contactId: string
   /** The account's WhatsApp config owner, used for the outbound send's
@@ -35,10 +42,16 @@ interface DispatchArgs {
  *
  * Eligibility gates (any → silent no-op):
  *   - AI off / auto-reply disabled for the account
- *   - a human agent is assigned (they own the thread)
+ *   - a human agent is assigned, or typed here in the last 12h (they
+ *     own the thread)
  *   - auto-reply was disabled for this conversation (prior handoff)
- *   - the per-conversation reply cap is reached
  *   - there's nothing to reply to
+ *
+ * Once the per-conversation reply cap is spent, or the model says it
+ * can't answer, the conversation is handed to the team (with a message
+ * to the customer when the channel's flow defines a handoff path, and a
+ * summary for the team) instead of going quiet: the bot answers a
+ * couple of questions, then gets out of the way.
  *
  * The 24h WhatsApp session window is inherently open here — we're
  * reacting to a customer message that just landed — so no separate
@@ -47,7 +60,7 @@ interface DispatchArgs {
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
-  const { accountId, conversationId, contactId, configOwnerUserId } = args
+  const { accountId, channelId, conversationId, contactId, configOwnerUserId } = args
 
   try {
     const db = supabaseAdmin()
@@ -80,9 +93,36 @@ export async function dispatchInboundToAiReply(
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
-    // Cheap early-out; the authoritative cap check is the atomic claim
-    // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    if (await hasRecentAgentMessage(db, conversationId)) return // a person is on it
+
+    // Hand the thread to the team: route to the configured handoff agent
+    // (never stomping an existing assignee), then let the flow engine
+    // tell the customer and leave the summary. Assigning fires the
+    // `on_conversation_assigned` trigger, which notifies the agent.
+    const handOff = async (reason: HandoffReason) => {
+      if (config.handoffAgentId && !conv.assigned_agent_id) {
+        await db
+          .from('conversations')
+          .update({ assigned_agent_id: config.handoffAgentId })
+          .eq('id', conversationId)
+      }
+      await handOffConversationToHuman({
+        accountId,
+        channelId,
+        contactId,
+        conversationId,
+        configOwnerUserId,
+        reason,
+      })
+    }
+
+    // Budget spent: the bot already answered what it could here. (The
+    // authoritative cap check is the atomic claim below; this read can
+    // race a concurrent inbound.)
+    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
+      await handOff('ai_limit')
+      return
+    }
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
@@ -138,27 +178,10 @@ export async function dispatchInboundToAiReply(
     })
 
     if (handoff || !text) {
-      // The model can't (or shouldn't) answer — stop auto-replying on
-      // this thread and hand it to a human. We (a) pause the bot here
-      // (sticky until re-enabled), (b) route the conversation to the
-      // configured handoff agent — null leaves it in the shared queue —
-      // and (c) leave a short internal note so whoever picks it up has
-      // context. Assigning fires the `on_conversation_assigned` trigger,
-      // which notifies the agent.
-      const summary = buildHandoffSummary({
-        messages,
-        replyCount: conv.ai_reply_count ?? 0,
-      })
-      const update: Record<string, unknown> = {
-        ai_autoreply_disabled: true,
-        ai_handoff_summary: summary,
-      }
-      // Only set the assignee when a target is configured AND the thread
-      // isn't already owned — never stomp an existing human assignment.
-      if (config.handoffAgentId && !conv.assigned_agent_id) {
-        update.assigned_agent_id = config.handoffAgentId
-      }
-      await db.from('conversations').update(update).eq('id', conversationId)
+      // The model can't (or shouldn't) answer: stop auto-replying on this
+      // thread (sticky until resumed, closed, or a new flow run) and
+      // hand it to a person.
+      await handOff('ai_unsure')
       return
     }
 

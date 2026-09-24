@@ -29,6 +29,19 @@ describe("resolveFallbackPolicy", () => {
     });
   });
 
+  it("keeps a non-empty handoff_node_key and drops a blank one", () => {
+    expect(resolveFallbackPolicy({ handoff_node_key: " asesor_msg " })).toEqual({
+      ...DEFAULT_FALLBACK_POLICY,
+      handoff_node_key: "asesor_msg",
+    });
+    expect(resolveFallbackPolicy({ handoff_node_key: "  " })).toEqual(
+      DEFAULT_FALLBACK_POLICY,
+    );
+    expect(resolveFallbackPolicy({ handoff_node_key: 7 })).toEqual(
+      DEFAULT_FALLBACK_POLICY,
+    );
+  });
+
   it("rejects invalid on_unknown_reply values", () => {
     expect(
       resolveFallbackPolicy({ on_unknown_reply: "nonsense" as unknown }),

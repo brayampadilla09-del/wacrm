@@ -382,6 +382,16 @@ export interface FlowFallbackPolicy {
   on_timeout_hours: number;
   /** What to do once max_reprompts has been hit. */
   on_exhaust: "handoff" | "end";
+  /**
+   * Optional node every automatic handoff routes through (reprompts
+   * exhausted, AI unsure, AI reply budget spent) instead of silently
+   * flipping the conversation to pending — typically a send_message
+   * telling the customer how the team will reach them, followed by a
+   * `handoff` node. Also used for out-of-flow AI handoffs on the same
+   * channel (see `handOffConversationToHuman`). Not editable in the
+   * builder yet; set it on the flow row.
+   */
+  handoff_node_key?: string;
 }
 
 export const DEFAULT_FALLBACK_POLICY: FlowFallbackPolicy = {
