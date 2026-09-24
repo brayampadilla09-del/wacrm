@@ -101,6 +101,14 @@ export interface FlowEditorContextValue {
   updateNodePositions: (
     positions: Record<string, { x: number; y: number }>,
   ) => void;
+  /**
+   * Same shape as `updateNodePositions` but dirties the editor (via
+   * `setState`, not `setStateRaw`) — for a user-triggered "re-arrange"
+   * action, unlike the initial dagre hydration on mount.
+   */
+  applyAutoLayout: (
+    positions: Record<string, { x: number; y: number }>,
+  ) => void;
   removeNode: (key: string) => void;
 
   // Actions
@@ -474,6 +482,16 @@ export function FlowEditorProvider({
     [],
   );
 
+  const applyAutoLayout = useCallback(
+    (positions: Record<string, { x: number; y: number }>) => {
+      setState((s) => ({
+        ...s,
+        nodes: applyNodePositions(s.nodes, positions),
+      }));
+    },
+    [setState],
+  );
+
   const addNode = useCallback(
     (type: NodeType): string => {
       const meta = NODE_META[type];
@@ -535,6 +553,7 @@ export function FlowEditorProvider({
       updateNodeConfig,
       updateNodePosition,
       updateNodePositions,
+      applyAutoLayout,
       removeNode,
       save,
       setStatus,
@@ -556,6 +575,7 @@ export function FlowEditorProvider({
       updateNodeConfig,
       updateNodePosition,
       updateNodePositions,
+      applyAutoLayout,
       removeNode,
       save,
       setStatus,

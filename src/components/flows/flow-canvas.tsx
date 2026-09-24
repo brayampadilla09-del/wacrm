@@ -57,7 +57,7 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2 } from 'lucide-react';
+import { LayoutGrid, Plus, Trash2 } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 
@@ -568,8 +568,9 @@ function FlowCanvasInner() {
             maskColor="color-mix(in oklch, var(--background) 70%, transparent)"
             className="!border-border !bg-card !rounded-xl !border !shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)]"
           />
-          <Panel position="top-left" className="!top-4 !left-4">
+          <Panel position="top-left" className="!top-4 !left-4 flex gap-2">
             <CanvasAddNodeButton t={t} />
+            <CanvasAutoArrangeButton t={t} nodes={builderNodes} />
           </Panel>
         </ReactFlow>
       </div>
@@ -783,5 +784,53 @@ function CanvasAddNodeButton({ t }: { t: ReturnType<typeof useTranslations> }) {
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+// ============================================================
+// Auto-arrange button — re-runs the dagre layout on demand for
+// flows that already have positions (the automatic pass in
+// `FlowCanvasInner` only fires once, for all-zero flows). Useful
+// after nodes were authored via script/seed rather than dragged
+// by hand, or after a flow grew messy from repeated edits.
+// Dirties the editor same as a manual drag — the user still has
+// to hit Save to persist.
+// ============================================================
+
+function CanvasAutoArrangeButton({
+  t,
+  nodes,
+}: {
+  t: ReturnType<typeof useTranslations>;
+  nodes: BuilderNode[];
+}) {
+  const reactFlow = useReactFlow();
+  const { applyAutoLayout } = useFlowEditor();
+
+  const handleClick = () => {
+    const canvasEdges = deriveCanvasEdges(nodes);
+    const positions = autoLayout(
+      nodes.map((n) => ({ id: n.node_key, width: NODE_WIDTH, height: NODE_HEIGHT })),
+      canvasEdges.map((e) => ({ source: e.source, target: e.target })),
+      { direction: 'TB' }
+    );
+    applyAutoLayout(Object.fromEntries([...positions]));
+    // Positions land in state on this render; fitView needs the next
+    // one to see the new node coordinates, hence the rAF deferral.
+    requestAnimationFrame(() => {
+      reactFlow.fitView({ padding: 0.2, maxZoom: 1, duration: 300 });
+    });
+  };
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={handleClick}
+      className="!bg-card !border-border gap-1.5 shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)]"
+    >
+      <LayoutGrid className="h-3.5 w-3.5" />
+      {t('autoArrange')}
+    </Button>
   );
 }

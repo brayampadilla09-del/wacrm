@@ -1064,6 +1064,7 @@
       "nodesTitle": "노드 ({count}개)",
       "nodesEmpty": "<strong>시작</strong> 노드를 추가한 뒤 <strong>버튼 보내기</strong> 노드, 그다음 <strong>인계</strong> 노드를 추가하세요 — 브리프에 나온 환영 메뉴 구조입니다.",
       "addNode": "노드 추가",
+      "autoArrange": "자동 정렬",
       "setAsEntry": "시작 노드로 설정",
       "removeNode": "노드 제거",
       "showAdvanced": "고급 설정 표시",

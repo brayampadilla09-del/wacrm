@@ -1064,6 +1064,7 @@
       "nodesTitle": "Nodes ({count})",
       "nodesEmpty": "Add a <strong>Start</strong> node, then a <strong>Send buttons</strong> node, then a <strong>Handoff</strong> — that's the welcome-menu shape from the brief.",
       "addNode": "Add node",
+      "autoArrange": "Auto-arrange",
       "setAsEntry": "Set as entry",
       "removeNode": "Remove node",
       "showAdvanced": "Show advanced",
