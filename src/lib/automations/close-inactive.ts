@@ -14,7 +14,7 @@ const INACTIVITY_HOURS = 1
 const CUSTOMER_WINDOW_MS = 23 * 60 * 60 * 1000
 
 const CLOSING_MESSAGE =
-  '¡Hola! Como no he tenido noticias tuyas, por ahora voy a cerrar esta conversación 🙂 Cuando quieras retomarla, solo escríbeme y seguimos donde quedamos.'
+  '¡Hola! Como no he tenido noticias tuyas, por ahora voy a cerrar esta conversación 😊 Cuando quieras retomarla, solo escríbeme y seguimos donde quedamos.'
 
 /**
  * Wraps up WhatsApp conversations Bimi has been waiting on for

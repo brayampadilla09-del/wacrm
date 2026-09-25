@@ -979,7 +979,18 @@ async function executeHandoff(
   const cfg = node.config as { assign_to?: string; note?: string };
   const reason = handoffReasonOf(run);
   const convUpdate: Record<string, unknown> = {
-    status: "pending",
+    // Without an in-CRM assignee, this handoff's message sends the
+    // customer to a *different* WhatsApp chat (see the "asesor_msg"
+    // node — a wa.me link to the team's own number); nobody is going to
+    // answer inside this conversation, so leaving it "pending" just
+    // stranded it forever (isHumanHandlingConversation blocks the bot
+    // for 12h, and ai_autoreply_disabled has no time-based reset — see
+    // resetConversationAiState). Closing it lets the very next inbound
+    // reopen it fresh (webhook route's "reopen a closed conversation"
+    // branch), so the bot picks back up instead of staying mute.
+    // With an assign_to, a person IS expected to answer here, so the
+    // existing "pending" semantics still apply.
+    status: cfg.assign_to ? "pending" : "closed",
     // The team owns the thread now: keep the AI auto-reply out of it
     // until someone resumes it, closes the conversation, or a new flow
     // run starts (see resetConversationAiState).
