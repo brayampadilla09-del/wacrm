@@ -58,6 +58,7 @@ interface ChannelSummary {
   notify_user_id: string | null;
   phone_number_id: string | null;
   status: ConnectionStatus;
+  registered_at: string | null;
 }
 
 /**
@@ -154,8 +155,16 @@ export function WhatsAppConfig() {
             <span
               className={cn(
                 'size-1.5 rounded-full',
-                c.status === 'connected' ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+                // Saved with valid credentials but never registered with
+                // Meta (/register + PIN never ran): Meta shows the number as
+                // disconnected, so a green dot here was misleading.
+                c.status !== 'connected'
+                  ? 'bg-muted-foreground/40'
+                  : c.registered_at
+                    ? 'bg-emerald-500'
+                    : 'bg-amber-500',
               )}
+              title={c.status === 'connected' && !c.registered_at ? t('noRegistrationHint') : undefined}
             />
           </button>
         ))}

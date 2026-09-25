@@ -76,14 +76,24 @@ interface WhatsAppWebhookEntry {
         wa_id: string
       }>
       messages?: WhatsAppMessage[]
-      statuses?: Array<{
-        id: string
-        status: string
-        timestamp: string
-        recipient_id: string
-      }>
+      statuses?: Array<StatusUpdate>
     }
     field: string
+  }>
+}
+
+// Estado de entrega que manda Meta. `errors` solo viene cuando status es
+// 'failed' (ej. 131026 número sin WhatsApp, 132001 plantilla inexistente).
+interface StatusUpdate {
+  id: string
+  status: string
+  timestamp: string
+  recipient_id: string
+  errors?: Array<{
+    code?: number
+    title?: string
+    message?: string
+    error_data?: { details?: string }
   }>
 }
 
@@ -356,12 +366,23 @@ function isValidStatusTransition(current: string, incoming: string): boolean {
   return ii > ci
 }
 
-async function handleStatusUpdate(status: {
-  id: string
-  status: string
-  timestamp: string
-  recipient_id: string
-}) {
+async function handleStatusUpdate(status: StatusUpdate) {
+  // The real reason Meta gives when a message fails (migration 045). Before,
+  // only status='failed' was mirrored and the code/reason were dropped, so
+  // nobody could tell "number has no WhatsApp" from "template missing".
+  const metaError = status.status === 'failed' ? status.errors?.[0] : undefined
+  const errorFields = metaError
+    ? {
+        error_code: typeof metaError.code === 'number' ? metaError.code : null,
+        error_title: metaError.title ?? metaError.message ?? null,
+        error_details: metaError.error_data?.details ?? null,
+        failed_at: new Date(parseInt(status.timestamp) * 1000).toISOString(),
+      }
+    : {}
+  if (metaError) {
+    console.warn('WhatsApp message failed:', status.id, metaError.code, metaError.title, metaError.error_data?.details)
+  }
+
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
   //    already match the CHECK constraint on messages.status. No
   //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
@@ -369,7 +390,7 @@ async function handleStatusUpdate(status: {
   //    assume a single row.
   const { error: msgErr } = await supabaseAdmin()
     .from('messages')
-    .update({ status: status.status })
+    .update({ status: status.status, ...errorFields })
     .eq('message_id', status.id)
 
   if (msgErr) {
@@ -404,6 +425,11 @@ async function handleStatusUpdate(status: {
     if (status.status === 'sent' && !('sent_at' in update)) update.sent_at = tsIso
     if (status.status === 'delivered') update.delivered_at = tsIso
     if (status.status === 'read') update.read_at = tsIso
+    if (metaError) {
+      update.error_message = [metaError.code, metaError.title, metaError.error_data?.details]
+        .filter(Boolean)
+        .join(' · ')
+    }
 
     const { error: recUpdateErr } = await supabaseAdmin()
       .from('broadcast_recipients')
@@ -438,6 +464,15 @@ async function handleStatusUpdate(status: {
           whatsapp_message_id: status.id,
           conversation_id: msgRow.conversation_id,
           status: status.status,
+          ...(metaError
+            ? {
+                error: {
+                  code: metaError.code ?? null,
+                  title: metaError.title ?? metaError.message ?? null,
+                  details: metaError.error_data?.details ?? null,
+                },
+              }
+            : {}),
         }
       )
     }
