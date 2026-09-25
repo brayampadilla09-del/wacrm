@@ -2195,6 +2195,39 @@ async function handleReplyForActiveRun(
   }
 
   if (matched) {
+    // Claim the run's current node BEFORE running any side effects. Two
+    // taps on the same button (double-tap, or a slow first reply the
+    // customer retries) arrive as two separate inbound messages —
+    // different meta_message_id, so isDuplicateInbound's retry check
+    // above doesn't catch them — and both reach this point having read
+    // the SAME `run` row, still parked on `currentNode.node_key`.
+    // Without a claim here, both calls would run advanceFromNodeKey
+    // concurrently, and anything it does before its own next suspend
+    // point (a send_message, a set_tag, and critically an http_fetch —
+    // e.g. pagina-estudio's booking-create endpoint) fires twice. This
+    // CAS is the same optimistic-lock primitive advanceCurrentNodeKey
+    // already uses at suspend points; doing it here first means only
+    // one of the two racing replies ever gets to execute the node
+    // chain, and the loser is dropped as a duplicate instead of
+    // creating a second booking.
+    const claimed = await advanceCurrentNodeKey(
+      db,
+      run.id,
+      run.current_node_key,
+      matched,
+    );
+    if (!claimed) {
+      await logEvent(db, run.id, "reply_received", currentNode.node_key, {
+        reason: "duplicate_reply_lost_claim_race",
+      });
+      return {
+        consumed: true,
+        flow_run_id: run.id,
+        outcome: "duplicate_inbound_ignored",
+      };
+    }
+    run.current_node_key = matched;
+
     // Reset reprompt count on a successful match. Skip the write when
     // already 0 — the collect_input capture branch above already
     // zeroed it, and interactive-reply matches against a fresh run

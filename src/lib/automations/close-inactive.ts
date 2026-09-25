@@ -121,15 +121,21 @@ export async function closeInactiveConversations(
       }
     }
 
-    // Mirrors /api/flows/cron's sweep — same terminal status, own
-    // end_reason so the two are distinguishable in flow_run_events.
-    await db
-      .from('flow_runs')
-      .update({ status: 'timed_out', ended_at: new Date().toISOString(), end_reason: 'inactivity_closed' })
-      .eq('account_id', conv.account_id)
-      .eq('contact_id', conv.contact_id)
-      .eq('status', 'active')
-
+    // Deliberately does NOT end the active flow_run here (that used to
+    // mirror /api/flows/cron's sweep with its own 'inactivity_closed'
+    // reason). Ending it after just INACTIVITY_HOURS made the closing
+    // message above a lie: it tells the customer "cuando quieras
+    // retomarla... seguimos donde quedamos", but a customer replying an
+    // hour-plus into picking a date, or right after confirming a
+    // booking, came back to a dead run and an entry-keyword match
+    // silently restarted the whole flow from the welcome message — felt
+    // like the bot "forgot" a booking in progress. `loadActiveRunForContact`
+    // matches on (account_id, contact_id, status='active') regardless of
+    // the conversation's open/closed status, and the webhook reopens a
+    // closed conversation on the next inbound, so leaving the run active
+    // means that reply resumes exactly where they left off. Truly
+    // abandoned runs are still reclaimed by /api/flows/cron on each
+    // flow's own (usually far longer) `fallback_policy.on_timeout_hours`.
     await db
       .from('conversations')
       .update({ status: 'closed', updated_at: new Date().toISOString() })
