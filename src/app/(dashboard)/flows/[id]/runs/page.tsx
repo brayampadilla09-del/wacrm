@@ -15,7 +15,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistance } from "date-fns";
 
 import { useTranslations } from "next-intl";
 
@@ -228,10 +228,10 @@ function RunCard({
   const StatusIcon = meta.icon;
   const contactLabel =
     run.contact?.name?.trim() || run.contact?.phone || t("unknownContact");
+  // started → ended. formatDistanceToNow(ended_at) measured how long ago
+  // the run ended, so a 3-minute run from July showed "ran for 2 months".
   const duration = run.ended_at
-    ? formatDistanceToNow(new Date(run.ended_at), {
-        addSuffix: false,
-      })
+    ? formatDistance(new Date(run.ended_at), new Date(run.started_at))
     : null;
   return (
     <div className="rounded-lg border border-border bg-card">

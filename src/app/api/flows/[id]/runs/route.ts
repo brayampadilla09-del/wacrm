@@ -65,17 +65,32 @@ export async function GET(
     created_at: string
   }> = []
   if (runIds.length > 0) {
-    const { data: evs, error: evsErr } = await supabase
-      .from('flow_run_events')
-      .select('flow_run_id, event_type, node_key, payload, created_at')
-      .in('flow_run_id', runIds)
-      .order('created_at', { ascending: true })
-    if (evsErr) {
-      // Non-fatal — the page can still show runs without timelines.
-      console.error('[flows-runs] events fetch failed:', evsErr.message)
-    } else if (evs) {
-      events = evs as typeof events
+    // Paged: PostgREST caps a response at 1000 rows by default, and 50
+    // runs of a big flow easily log more than that. In a single request
+    // the oldest runs filled the cap and the newest ones (the ones you
+    // open to debug) came back with no events at all.
+    const PAGE_SIZE = 1000
+    const MAX_PAGES = 10
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const from = page * PAGE_SIZE
+      const { data: evs, error: evsErr } = await supabase
+        .from('flow_run_events')
+        .select('flow_run_id, event_type, node_key, payload, created_at')
+        .in('flow_run_id', runIds)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, from + PAGE_SIZE - 1)
+      if (evsErr) {
+        // Non-fatal — the page can still show runs without timelines.
+        console.error('[flows-runs] events fetch failed:', evsErr.message)
+        break
+      }
+      events = events.concat((evs ?? []) as typeof events)
+      if (!evs || evs.length < PAGE_SIZE) break
     }
+    // Fetched newest-first so that hitting MAX_PAGES drops the oldest
+    // runs' events, never the newest; the page expects oldest-first.
+    events.reverse()
   }
 
   return NextResponse.json({

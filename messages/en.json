@@ -1175,6 +1175,10 @@
           "label": "Tag contact",
           "blurb": "Adds or removes a contact tag"
         },
+        "http_fetch": {
+          "label": "HTTP request",
+          "blurb": "Calls an external API and saves the reply"
+        },
         "handoff": {
           "label": "Handoff to agent",
           "blurb": "Hands the conversation to a human"

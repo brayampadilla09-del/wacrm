@@ -105,13 +105,24 @@ export default function PipelinesPage() {
       // (migration 039 denormalizes `channel_id` from the contact) —
       // scope to whichever channel is currently selected.
       if (!channelId) return [];
-      const { data } = await supabase
+      // The assignee is fetched in a second query instead of embedded
+      // (`assignee:profiles!deals_assigned_to_fkey(*)`): databases where
+      // `deals.assigned_to` was added without the FK constraint make
+      // PostgREST reject the embed with PGRST200, and the whole board
+      // then loaded empty.
+      const { data, error } = await supabase
         .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
+        .select("*, contact:contacts(*)")
         .eq("pipeline_id", pipelineId)
         .eq("channel_id", channelId)
         .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+      if (error) console.error("Failed to load deals:", error.message);
+      const deals = (data ?? []) as Deal[];
+      const assigneeIds = [...new Set(deals.map((d) => d.assigned_to).filter((id): id is string => !!id))];
+      if (assigneeIds.length === 0) return deals;
+      const { data: profiles } = await supabase.from("profiles").select("*").in("id", assigneeIds);
+      const byId = new Map((profiles ?? []).map((p) => [p.id, p]));
+      return deals.map((d) => ({ ...d, assignee: d.assigned_to ? byId.get(d.assigned_to) : undefined }));
     },
     [supabase, channelId],
   );
