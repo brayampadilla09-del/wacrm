@@ -220,6 +220,20 @@ export function buildSendComponents(
   template: MessageTemplate,
   params: SendTimeParams = {},
 ): MetaSendComponent[] {
+  // AUTHENTICATION (códigos de un solo uso): Meta fija el texto y exige el
+  // código dos veces, en el cuerpo y en el botón "Copiar código", que viaja
+  // como botón url de índice 0. Se arma aparte porque la fila local no
+  // trae ni variables ni botones que el constructor genérico entienda.
+  if (template.category === 'Authentication') {
+    const code = (params.body?.[0] ?? '').trim();
+    if (!code) {
+      throw new Error('Authentication template requires the one-time code as the first body value.');
+    }
+    return [
+      { type: 'body', parameters: [{ type: 'text', text: code }] },
+      { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: code }] },
+    ];
+  }
   const out: MetaSendComponent[] = [];
   const header = buildHeaderComponent(template, params);
   if (header) out.push(header);

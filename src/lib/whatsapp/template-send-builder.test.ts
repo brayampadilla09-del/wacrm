@@ -255,6 +255,28 @@ describe('buildSendComponents — buttons', () => {
   });
 });
 
+describe('buildSendComponents — authentication', () => {
+  it('sends the code in the body and in the copy-code (url) button', () => {
+    const components = buildSendComponents(
+      row({ category: 'Authentication', body_text: '', language: 'es' }),
+      { body: ['482913'] },
+    );
+    expect(components).toEqual([
+      { type: 'body', parameters: [{ type: 'text', text: '482913' }] },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: '482913' }],
+      },
+    ]);
+  });
+
+  it('throws without a code', () => {
+    expect(() => buildSendComponents(row({ category: 'Authentication' }), {})).toThrow(/one-time code/);
+  });
+});
+
 describe('buildSendComponents — end-to-end mix', () => {
   it('orders components header → body → buttons and includes all', () => {
     const components = buildSendComponents(

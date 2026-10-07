@@ -480,9 +480,13 @@ export async function sendMessageToConversation(
     (templateMessageParams as { body?: string[] } | undefined)?.body ??
     templateParams ??
     [];
+  // Los códigos de un solo uso nunca se guardan en el hilo: cualquiera del
+  // equipo que abra la conversación podría usarlos.
   const renderedTemplateText =
     messageType === 'template' && templateRow
-      ? renderTemplateBody(templateRow.body_text, templateBodyParams)
+      ? templateRow.category === 'Authentication'
+        ? 'Código de verificación enviado'
+        : renderTemplateBody(templateRow.body_text, templateBodyParams)
       : null;
 
   const resolvedContentText = renderedTemplateText ?? contentText;
