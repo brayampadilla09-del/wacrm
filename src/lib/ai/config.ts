@@ -14,10 +14,11 @@ interface AiConfigRow {
   embeddings_api_key: string | null
   coming_soon_enabled: boolean
   coming_soon_prompt: string | null
+  coming_soon_max_replies: number
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key, coming_soon_enabled, coming_soon_prompt'
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key, coming_soon_enabled, coming_soon_prompt, coming_soon_max_replies'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -84,7 +85,11 @@ export async function loadAiConfig(
     comingSoon: row.coming_soon_enabled === true,
     isActive: row.is_active,
     autoReplyEnabled: row.auto_reply_enabled,
-    autoReplyMaxPerConversation: row.auto_reply_max_per_conversation,
+    // With nobody to hand over to, the coming soon mode gets its own,
+    // larger reply budget; the normal one is left alone.
+    autoReplyMaxPerConversation: row.coming_soon_enabled
+      ? row.coming_soon_max_replies
+      : row.auto_reply_max_per_conversation,
     handoffAgentId: row.handoff_agent_id,
     embeddingsApiKey,
   }
