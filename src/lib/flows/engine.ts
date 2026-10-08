@@ -1761,6 +1761,16 @@ async function advanceFromNodeKey(
     if (node.node_type === "end") {
       await logEvent(db, run.id, "completed", node.node_key);
       await endRun(db, run.id, "completed", "end_node");
+      // `close_conversation` (set on the menu's "Finalizar chat" path):
+      // the customer asked to finish, so close the thread now instead of
+      // leaving it open for close-inactive to sweep. A later inbound
+      // message reopens it.
+      if ((node.config as { close_conversation?: boolean } | null)?.close_conversation === true && run.conversation_id) {
+        await db
+          .from("conversations")
+          .update({ status: "closed", updated_at: new Date().toISOString() })
+          .eq("id", run.conversation_id);
+      }
       return { outcome: "completed" };
     }
     // Unknown node type — shouldn't happen given the CHECK constraint.

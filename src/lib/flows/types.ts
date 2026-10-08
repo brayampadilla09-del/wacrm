@@ -255,8 +255,11 @@ export interface HttpFetchNodeConfig {
   response_var?: string;
 }
 
-// Terminal nodes carry no config — they just stop the run.
-export type EndNodeConfig = Record<string, never>;
+// Terminal nodes just stop the run. `close_conversation` also closes the
+// conversation (inbox status) right away.
+export interface EndNodeConfig {
+  close_conversation?: boolean;
+}
 
 /**
  * Total union — every concrete node_type the v1 engine understands.
