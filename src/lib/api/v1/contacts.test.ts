@@ -4,8 +4,35 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   serializeContact,
   findOrCreateContact,
+  planTagChanges,
   ContactError,
 } from './contacts';
+
+describe('planTagChanges', () => {
+  const existing = new Set(['bimi', 'meta-ads', 'vip']);
+
+  it('replace mode makes the contact end up with exactly the desired tags', () => {
+    const plan = planTagChanges(existing, new Set(['web', 'vip']), 'replace');
+    expect(plan.toAdd).toEqual(['web']);
+    expect(plan.toRemove.sort()).toEqual(['bimi', 'meta-ads']);
+  });
+
+  it('add mode only adds: a website lead must not strip "Conversó con Bimi" or "Meta Ads"', () => {
+    const plan = planTagChanges(existing, new Set(['web']), 'add');
+    expect(plan.toAdd).toEqual(['web']);
+    expect(plan.toRemove).toEqual([]);
+  });
+
+  it('add mode is a no-op when every desired tag is already on the contact', () => {
+    const plan = planTagChanges(existing, new Set(['vip', 'bimi']), 'add');
+    expect(plan).toEqual({ toAdd: [], toRemove: [] });
+  });
+
+  it('replace with an empty set clears the contact; add with an empty set changes nothing', () => {
+    expect(planTagChanges(existing, new Set(), 'replace').toRemove.sort()).toEqual(['bimi', 'meta-ads', 'vip']);
+    expect(planTagChanges(existing, new Set(), 'add')).toEqual({ toAdd: [], toRemove: [] });
+  });
+});
 
 describe('serializeContact', () => {
   it('flattens contact_tags(tags(*)) onto a tags array and nulls missing fields', () => {

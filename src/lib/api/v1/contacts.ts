@@ -165,17 +165,39 @@ export async function findOrCreateContact(
 }
 
 /**
- * Replace a contact's tags to exactly match `tagNames` (case-
- * insensitive; missing tags are created). A no-op when `tagNames` is
- * undefined — pass `[]` to clear all tags. Reuses `resolveImportTagIds`
- * so API and CSV-import tag handling stay consistent.
+ * Which tag joins to insert / delete so a contact ends up with `desired`.
+ * `replace` makes the contact's tags exactly `desired`; `add` only adds the
+ * missing ones and never removes anything.
+ */
+export function planTagChanges(
+  existing: ReadonlySet<string>,
+  desired: ReadonlySet<string>,
+  mode: 'replace' | 'add'
+): { toAdd: string[]; toRemove: string[] } {
+  const toAdd = [...desired].filter((id) => !existing.has(id));
+  const toRemove =
+    mode === 'replace' ? [...existing].filter((id) => !desired.has(id)) : [];
+  return { toAdd, toRemove };
+}
+
+/**
+ * Set a contact's tags from `tagNames` (case-insensitive; missing tags are
+ * created). In `replace` mode (the default, used by PATCH and for brand-new
+ * contacts) the contact ends up with exactly those tags — pass `[]` to clear
+ * all. In `add` mode existing tags are kept: that is what a caller that only
+ * means "also tag this contact" needs. `POST /contacts` on a contact that
+ * already existed used to replace, so a site booking stripped tags like
+ * "Conversó con Bimi" or "Meta Ads" off a contact that had written first.
+ * Reuses `resolveImportTagIds` so API and CSV-import tag handling stay
+ * consistent.
  */
 export async function setContactTags(
   db: SupabaseClient,
   accountId: string,
   auditUserId: string,
   contactId: string,
-  tagNames: string[]
+  tagNames: string[],
+  mode: 'replace' | 'add' = 'replace'
 ): Promise<void> {
   const { tagIdByKey } = await resolveImportTagIds(db, {
     accountId,
@@ -201,8 +223,7 @@ export async function setContactTags(
     (current ?? []).map((r) => r.tag_id as string)
   );
 
-  const toAdd = [...desired].filter((id) => !existing.has(id));
-  const toRemove = [...existing].filter((id) => !desired.has(id));
+  const { toAdd, toRemove } = planTagChanges(existing, desired, mode);
 
   if (toRemove.length > 0) {
     const { error } = await db

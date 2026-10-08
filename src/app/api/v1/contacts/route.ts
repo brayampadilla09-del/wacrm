@@ -129,7 +129,18 @@ export async function POST(request: Request) {
       ? body.tags.filter((t): t is string => typeof t === 'string')
       : [];
     if (tags.length > 0) {
-      await setContactTags(ctx.supabase, ctx.accountId, auditUserId, id, tags);
+      // A contact that already existed keeps its tags (the docs say a match is
+      // just returned): only add the requested ones. Replacing here wiped
+      // tags such as "Conversó con Bimi" and "Meta Ads" whenever the website
+      // registered a lead for someone who had written on WhatsApp first.
+      await setContactTags(
+        ctx.supabase,
+        ctx.accountId,
+        auditUserId,
+        id,
+        tags,
+        created ? 'replace' : 'add'
+      );
     }
 
     // Opt-in, not automatic: this endpoint is also used for bulk CSV

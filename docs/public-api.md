@@ -191,7 +191,9 @@ Create a contact. Scope: `contacts:write`. `phone` (E.164) is required;
 if missing) are optional. **Find-or-create by phone:** an existing
 match returns `200` with the existing contact; a new contact returns
 `201`. The response body is the serialized contact (same shape as the
-list rows above).
+list rows above). When the contact already existed, any `tags` you send
+are **added** to the tags it already has (nothing is removed); use
+`PATCH` to replace a contact's tags.
 
 Pass `notify: true` when this call represents one real new lead (a
 booking wizard, a form submission) rather than a bulk import or manual
