@@ -939,7 +939,7 @@ async function sendListAndSuspend(
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText: cfg.text,
+    bodyText: interpolateVars(cfg.text, run.vars, contact),
     buttonLabel: cfg.button_label,
     headerText: cfg.header_text,
     footerText: cfg.footer_text,
