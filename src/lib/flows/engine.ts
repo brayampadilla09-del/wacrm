@@ -296,6 +296,27 @@ export function matchesKeywordTrigger(
 }
 
 /**
+ * Length of the longest keyword of `cfg` found in `text` (0 = no match).
+ * When several active flows match the same message, the most specific
+ * keyword wins: "Hola BSign, ... Avísenme cuando lancen" must start the
+ * launch-notice flow (keyword "avísenme cuando lancen"), not the main
+ * menu just because it also contains "hola" and was created first.
+ */
+export function keywordMatchLength(text: string, cfg: KeywordTriggerConfig): number {
+  if (!text || !cfg.keywords?.length) return 0;
+  const matchType = cfg.match_type ?? "contains";
+  const haystack = cfg.case_sensitive ? text : text.toLowerCase();
+  let best = 0;
+  for (const raw of cfg.keywords) {
+    if (!raw) continue;
+    const needle = cfg.case_sensitive ? raw : raw.toLowerCase();
+    const hit = matchType === "exact" ? haystack === needle : haystack.includes(needle);
+    if (hit && needle.length > best) best = needle.length;
+  }
+  return best;
+}
+
+/**
  * True when a message typed while a run waits on a menu is an explicit
  * "start over": a short message (at most 3 words) that IS one of the
  * flow's trigger keywords or starts with one ("hola", "hola bimi",
@@ -733,27 +754,44 @@ async function findEntryFlow(
 
   const typed = flows as FlowRow[];
   const keywordCandidates: FlowRow[] = [];
+  // Best literal hit so far: the longest matching keyword wins (ties keep
+  // the oldest flow, as before). `also_on_first_message` hits score 0 so
+  // any real keyword match beats them.
+  let best: { flow: FlowRow; score: number } | null = null;
+  let firstInbound: FlowRow | null = null;
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       const cfg = flow.trigger_config as KeywordTriggerConfig;
       // `also_on_first_message`: a brand-new contact whose first message
       // happens to contain none of the keywords ("Buen día, quisiera
       // cotizar") would otherwise get no reply at all.
-      const hit = questionForAi
-        ? isExplicitRestartRequest(message.text, cfg.keywords)
-        : matchesKeywordTrigger(message.text, cfg) ||
-          (isFirstInbound && cfg.also_on_first_message === true);
-      if (hit) return flow;
+      let score = -1;
+      if (questionForAi) {
+        if (isExplicitRestartRequest(message.text, cfg.keywords)) score = 1;
+      } else {
+        const len = keywordMatchLength(message.text, cfg);
+        if (len > 0) score = len;
+        else if (isFirstInbound && cfg.also_on_first_message === true) score = 0;
+      }
+      if (score >= 0) {
+        if (!best || score > best.score) best = { flow, score };
+        continue;
+      }
       keywordCandidates.push(flow);
     } else if (
       flow.trigger_type === "first_inbound_message" &&
       isFirstInbound &&
       !questionForAi
     ) {
-      return flow;
+      // A literal keyword hit (scored below) is more specific than "any
+      // first message", so it wins; otherwise the first such flow starts.
+      firstInbound ??= flow;
     }
     // 'manual' triggers do not auto-start from inbound messages.
   }
+  if (best && best.score > 0) return best.flow;
+  if (firstInbound) return firstInbound;
+  if (best) return best.flow;
 
   // No literal keyword hit. Ask the account's configured AI model (if
   // any) whether the message's intent matches one of the keyword-trigger

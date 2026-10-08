@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   matchReplyId,
   matchesKeywordTrigger,
+  keywordMatchLength,
   matchesCancelIntentKeyword,
   isExplicitRestartRequest,
   looksLikeQuestion,
@@ -416,5 +417,30 @@ describe("validateCollectInput", () => {
   it("'regex' with a missing or malformed pattern fails open (accepts)", () => {
     expect(validateCollectInput("regex", undefined, "anything")).toBe(true);
     expect(validateCollectInput("regex", "([unclosed", "anything")).toBe(true);
+  });
+});
+
+describe("keywordMatchLength", () => {
+  it("returns 0 when nothing matches", () => {
+    expect(keywordMatchLength("buenas", { keywords: ["hola"] })).toBe(0);
+    expect(keywordMatchLength("", { keywords: ["hola"] })).toBe(0);
+  });
+
+  it("returns the length of the longest matching keyword", () => {
+    const text = "Hola BSign, quiero que mi sala me dé calma. Avísenme cuando lancen.";
+    expect(keywordMatchLength(text, { keywords: ["hola", "menu"] })).toBe(4);
+    expect(keywordMatchLength(text, { keywords: ["avísenme cuando lancen", "hola"] })).toBe("avísenme cuando lancen".length);
+  });
+
+  it("lets the launch-notice keyword outrank the generic greeting", () => {
+    const text = "Hola BSign, quiero que mi habitación me dé descanso. Avísenme cuando lancen.";
+    const menu = keywordMatchLength(text, { keywords: ["hola", "buenas", "cita"] });
+    const launch = keywordMatchLength(text, { keywords: ["avísenme cuando lancen"] });
+    expect(launch).toBeGreaterThan(menu);
+  });
+
+  it("respects exact matching", () => {
+    expect(keywordMatchLength("hola amigo", { keywords: ["hola"], match_type: "exact" })).toBe(0);
+    expect(keywordMatchLength("hola", { keywords: ["hola"], match_type: "exact" })).toBe(4);
   });
 });
