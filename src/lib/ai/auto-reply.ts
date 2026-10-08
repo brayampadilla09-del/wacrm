@@ -155,6 +155,9 @@ export async function dispatchInboundToAiReply(
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
+      replyBudget: config.comingSoon
+        ? { used: conv.ai_reply_count, max: config.autoReplyMaxPerConversation }
+        : undefined,
     })
 
     const { text, handoff, usage } = await generateReply({

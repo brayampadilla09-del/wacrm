@@ -92,6 +92,9 @@ export async function assistOffScriptReply(
       mode: "flow_assist",
       knowledge,
       flowStep: step,
+      replyBudget: config.comingSoon
+        ? { used: conv.ai_reply_count ?? 0, max: config.autoReplyMaxPerConversation }
+        : undefined,
     });
 
     const { text: reply, handoff, usage } = await generateReply({

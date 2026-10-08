@@ -84,8 +84,12 @@ export function buildSystemPrompt(args: {
   knowledge?: string[]
   /** Required context for `flow_assist`; ignored otherwise. */
   flowStep?: FlowStepContext
+  /** Replies already sent on this conversation vs. its cap. Only passed in
+   *  "modo muy pronto", where nobody takes over after the cap: the model
+   *  must then steer the chat toward a close instead of being cut off. */
+  replyBudget?: { used: number; max: number }
 }): string {
-  const { userPrompt, mode, knowledge, flowStep } = args
+  const { userPrompt, mode, knowledge, flowStep, replyBudget } = args
   const automatic = mode === 'auto_reply' || mode === 'flow_assist'
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
@@ -124,6 +128,19 @@ export function buildSystemPrompt(args: {
 
   if (userPrompt && userPrompt.trim()) {
     parts.push(`Business context and instructions:\n${userPrompt.trim()}`)
+  }
+
+  if (automatic && replyBudget) {
+    const left = replyBudget.max - replyBudget.used // counts the reply being written now
+    if (left <= 1) {
+      parts.push(
+        'This is the last reply you can send in this conversation. Answer what they asked in one short sentence if you can, then close the conversation warmly: thank them, remind them of the launch date and the Instagram link from your instructions, and say goodbye. Do not ask questions or invite more questions.',
+      )
+    } else if (left <= 3) {
+      parts.push(
+        `This conversation is close to its reply limit (about ${left} replies left, including this one). Answer what they asked, and start steering toward a close: make clear you have shared everything available for now, point them to the launch date and the Instagram link from your instructions, and do not open new topics or ask follow-up questions.`,
+      )
+    }
   }
 
   if (knowledge && knowledge.length > 0) {
