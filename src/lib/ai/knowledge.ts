@@ -92,12 +92,15 @@ export async function ingestDocument(
 export async function retrieveKnowledge(
   db: SupabaseClient,
   accountId: string,
-  config: Pick<AiConfig, 'embeddingsApiKey'>,
+  config: Pick<AiConfig, 'embeddingsApiKey' | 'comingSoon'>,
   queryText: string,
   k = 5,
 ): Promise<string[]> {
   const query = queryText.trim()
   if (!query || k <= 0) return []
+  // "Modo muy pronto": the knowledge base documents plans and prices, so
+  // it stays out of the prompt entirely while the mode is on.
+  if (config.comingSoon) return []
 
   // Skip everything when the account has no knowledge base — otherwise
   // every draft / auto-reply would pay for a query embedding + two RPCs

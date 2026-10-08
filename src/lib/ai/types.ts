@@ -29,6 +29,9 @@ export interface AiConfig {
    *  knowledge base is embedded and semantic retrieval turns on; when
    *  null, retrieval falls back to lexical full-text search. */
   embeddingsApiKey: string | null
+  /** "Modo muy pronto": `systemPrompt` already holds the coming-soon
+   *  prompt and the knowledge base must not be consulted. */
+  comingSoon?: boolean
 }
 
 /** A single conversation turn in the shape both providers accept. */

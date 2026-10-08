@@ -12,10 +12,12 @@ interface AiConfigRow {
   auto_reply_max_per_conversation: number
   handoff_agent_id: string | null
   embeddings_api_key: string | null
+  coming_soon_enabled: boolean
+  coming_soon_prompt: string | null
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key'
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key, coming_soon_enabled, coming_soon_prompt'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -73,7 +75,13 @@ export async function loadAiConfig(
     provider: row.provider,
     model: row.model,
     apiKey: decrypt(row.api_key),
-    systemPrompt: row.system_prompt,
+    // "Modo muy pronto" swaps the persona/knowledge prompt wholesale, so
+    // nothing in the normal one (plans, prices) can leak while it is on.
+    systemPrompt:
+      row.coming_soon_enabled && row.coming_soon_prompt
+        ? row.coming_soon_prompt
+        : row.system_prompt,
+    comingSoon: row.coming_soon_enabled === true,
     isActive: row.is_active,
     autoReplyEnabled: row.auto_reply_enabled,
     autoReplyMaxPerConversation: row.auto_reply_max_per_conversation,

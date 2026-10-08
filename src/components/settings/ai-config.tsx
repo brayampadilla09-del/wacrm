@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/select';
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
+import { AiComingSoonCard } from './ai-coming-soon';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
 import type { AiProvider } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
@@ -258,6 +259,7 @@ export function AiConfig() {
       )}
 
       <div className="space-y-6">
+        <AiComingSoonCard />
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
