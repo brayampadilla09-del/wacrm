@@ -1394,6 +1394,52 @@ async function endRun(
       end_reason: reason,
     })
     .eq("id", runId);
+  if (status === "failed") await flagFailedRunForTeam(db, runId, reason);
+}
+
+/**
+ * A run that dies on its own (Meta rejected a send, a node is missing...)
+ * used to leave the customer with no answer and nobody on the team the
+ * wiser. Put the conversation in the team's queue with a note saying what
+ * broke. Best effort: it never throws, and a run without a conversation is
+ * skipped.
+ */
+async function flagFailedRunForTeam(
+  db: AdminClient,
+  runId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const { data } = await db
+      .from("flow_runs")
+      .select("account_id, user_id, contact_id, conversation_id, vars")
+      .eq("id", runId)
+      .maybeSingle();
+    const run = data as Pick<
+      FlowRunRow,
+      "account_id" | "user_id" | "contact_id" | "conversation_id" | "vars"
+    > | null;
+    if (!run?.conversation_id || !run.contact_id) return;
+    await db
+      .from("conversations")
+      .update({
+        status: "pending",
+        ai_autoreply_disabled: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", run.conversation_id);
+    await recordHandoffSummary(db, {
+      accountId: run.account_id,
+      conversationId: run.conversation_id,
+      contactId: run.contact_id,
+      authorUserId: run.user_id,
+      reason: "flow_error",
+      vars: run.vars,
+      note: `Motivo técnico: ${reason}`,
+    });
+  } catch (err) {
+    console.error("[flows] flagFailedRunForTeam failed:", err instanceof Error ? err.message : err);
+  }
 }
 
 // ============================================================

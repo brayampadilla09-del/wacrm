@@ -20,6 +20,8 @@ export type HandoffReason =
   | 'ai_unsure'
   /** The per-conversation AI reply budget ran out. */
   | 'ai_limit'
+  /** A flow run broke (e.g. Meta rejected a send): the customer got no answer. */
+  | 'flow_error'
   /** An agent asked for a summary from the inbox. */
   | 'manual'
 
@@ -28,6 +30,7 @@ export const HANDOFF_REASON_LABEL: Record<HandoffReason, string> = {
   flow_fallback: 'el bot no entendió varias respuestas seguidas',
   ai_unsure: 'la IA no tenía cómo responder con certeza',
   ai_limit: 'la IA ya respondió lo que podía en esta conversación',
+  flow_error: 'un mensaje del bot no se pudo enviar y el cliente quedó sin respuesta',
   manual: 'resumen pedido desde la bandeja',
 }
 

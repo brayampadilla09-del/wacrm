@@ -75,3 +75,11 @@ describe('describeFlowVars', () => {
     expect(describeFlowVars(null)).toEqual([])
   })
 })
+
+describe('flow_error handoff', () => {
+  it('tells the team the customer was left without an answer', () => {
+    const text = buildHandoffSummary({ messages: [], reason: 'flow_error', vars: { space_type: 'Residencial' } })
+    expect(text).toContain('no se pudo enviar')
+    expect(text).toContain('space_type: Residencial')
+  })
+})
