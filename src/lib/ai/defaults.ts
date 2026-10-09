@@ -105,6 +105,9 @@ export function buildSystemPrompt(args: {
     parts.push(
       `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
     )
+    parts.push(
+      'Never repeat or paraphrase a message the assistant already sent in this conversation, and never introduce yourself or greet again once you have. If the customer only repeats a greeting or sends a message with no content (".", an emoji), reply with one short, different line that moves things forward, never the same text twice.',
+    )
   }
 
   if (mode === 'flow_assist' && flowStep) {
