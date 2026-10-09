@@ -14,6 +14,9 @@ import {
 import type { HandoffReason } from './handoff'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
+const COMING_SOON_CLOSING_TEXT =
+  'Por ahora BSign aún no está en funcionamiento: lanzamos el 26 de octubre. Mientras tanto puedes ver el adelanto en Instagram: https://instagram.com/bsignestudio.col 🪴'
+
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
   accountId: string
@@ -116,11 +119,32 @@ export async function dispatchInboundToAiReply(
       })
     }
 
+    // Coming-soon mode has no team to hand off to: say once that we are not
+    // operating yet, then go silent on this thread (no repeated replies).
+    const closeComingSoon = async () => {
+      const { data: claimedClose } = await db
+        .from('conversations')
+        .update({ ai_autoreply_disabled: true })
+        .eq('id', conversationId)
+        .eq('ai_autoreply_disabled', false)
+        .select('id')
+      if (!claimedClose || claimedClose.length === 0) return
+      await engineSendText({
+        accountId,
+        userId: configOwnerUserId,
+        conversationId,
+        contactId,
+        text: COMING_SOON_CLOSING_TEXT,
+        aiGenerated: true,
+      })
+    }
+
     // Budget spent: the bot already answered what it could here. (The
     // authoritative cap check is the atomic claim below; this read can
     // race a concurrent inbound.)
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
-      await handOff('ai_limit')
+      if (config.comingSoon) await closeComingSoon()
+      else await handOff('ai_limit')
       return
     }
 
@@ -184,7 +208,8 @@ export async function dispatchInboundToAiReply(
       // The model can't (or shouldn't) answer: stop auto-replying on this
       // thread (sticky until resumed, closed, or a new flow run) and
       // hand it to a person.
-      await handOff('ai_unsure')
+      if (config.comingSoon) await closeComingSoon()
+      else await handOff('ai_unsure')
       return
     }
 
