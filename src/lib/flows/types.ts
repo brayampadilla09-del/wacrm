@@ -293,6 +293,12 @@ export interface KeywordTriggerConfig {
   /** Also start on a contact's very first inbound message, even when it
    *  contains none of the keywords. */
   also_on_first_message?: boolean;
+  /**
+   * Tie-breaker when a message matches several active flows: higher wins
+   * (integer, -100..100, default 0). Below it, the longest matching keyword
+   * wins, then the oldest flow. See keyword-match.ts.
+   */
+  priority?: number;
 }
 
 // No knobs in v1 — the trigger has a single semantic. Kept as a type

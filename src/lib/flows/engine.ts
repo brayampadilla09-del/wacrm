@@ -71,6 +71,7 @@ import {
   type StartNodeConfig,
   type KeywordTriggerConfig,
 } from "./types";
+import { compareKeywordHits, keywordMatchLength, triggerPriority, type KeywordHit } from "./keyword-match";
 
 // ============================================================
 // Pure helpers — extracted so engine.test.ts can exercise them
@@ -273,48 +274,9 @@ function collectNodeOptions(node: {
   return [];
 }
 
-/**
- * Case-insensitive contains/exact match against a list of keywords.
- * Used by the trigger evaluator. Stable enough that the v3 builder
- * UI can preview matches by passing canned strings.
- */
-export function matchesKeywordTrigger(
-  text: string,
-  cfg: KeywordTriggerConfig,
-): boolean {
-  if (!text || !cfg.keywords?.length) return false;
-  const matchType = cfg.match_type ?? "contains";
-  const haystack = cfg.case_sensitive ? text : text.toLowerCase();
-  for (const raw of cfg.keywords) {
-    if (!raw) continue;
-    const needle = cfg.case_sensitive ? raw : raw.toLowerCase();
-    if (matchType === "exact" ? haystack === needle : haystack.includes(needle)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Length of the longest keyword of `cfg` found in `text` (0 = no match).
- * When several active flows match the same message, the most specific
- * keyword wins: "Hola BSign, ... Avísenme cuando lancen" must start the
- * launch-notice flow (keyword "avísenme cuando lancen"), not the main
- * menu just because it also contains "hola" and was created first.
- */
-export function keywordMatchLength(text: string, cfg: KeywordTriggerConfig): number {
-  if (!text || !cfg.keywords?.length) return 0;
-  const matchType = cfg.match_type ?? "contains";
-  const haystack = cfg.case_sensitive ? text : text.toLowerCase();
-  let best = 0;
-  for (const raw of cfg.keywords) {
-    if (!raw) continue;
-    const needle = cfg.case_sensitive ? raw : raw.toLowerCase();
-    const hit = matchType === "exact" ? haystack === needle : haystack.includes(needle);
-    if (hit && needle.length > best) best = needle.length;
-  }
-  return best;
-}
+// Keyword matching lives in keyword-match.ts (shared with the builder's
+// conflict warnings). Re-exported for existing callers and tests.
+export { keywordMatchLength, matchesKeywordTrigger } from "./keyword-match";
 
 /**
  * True when a message typed while a run waits on a menu is an explicit
@@ -754,27 +716,33 @@ async function findEntryFlow(
 
   const typed = flows as FlowRow[];
   const keywordCandidates: FlowRow[] = [];
-  // Best literal hit so far: the longest matching keyword wins (ties keep
-  // the oldest flow, as before). `also_on_first_message` hits score 0 so
-  // any real keyword match beats them.
-  let best: { flow: FlowRow; score: number } | null = null;
+  // Every keyword flow that matches competes: highest `priority`, then the
+  // longest matching keyword (most specific), then the oldest flow. See
+  // keyword-match.ts. A literal keyword hit beats "any first message".
+  let best: { flow: FlowRow; hit: KeywordHit } | null = null;
+  let firstMessageHit: FlowRow | null = null;
   let firstInbound: FlowRow | null = null;
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       const cfg = flow.trigger_config as KeywordTriggerConfig;
+      let length = 0;
+      if (questionForAi) {
+        // Only an explicit restart ("hola", "menú") may start a flow on a
+        // question the AI will answer; all such hits weigh the same.
+        if (isExplicitRestartRequest(message.text, cfg.keywords)) length = 1;
+      } else {
+        length = keywordMatchLength(message.text, cfg);
+      }
+      if (length > 0) {
+        const hit: KeywordHit = { priority: triggerPriority(cfg), length, createdAt: flow.created_at };
+        if (!best || compareKeywordHits(hit, best.hit) < 0) best = { flow, hit };
+        continue;
+      }
       // `also_on_first_message`: a brand-new contact whose first message
       // happens to contain none of the keywords ("Buen día, quisiera
       // cotizar") would otherwise get no reply at all.
-      let score = -1;
-      if (questionForAi) {
-        if (isExplicitRestartRequest(message.text, cfg.keywords)) score = 1;
-      } else {
-        const len = keywordMatchLength(message.text, cfg);
-        if (len > 0) score = len;
-        else if (isFirstInbound && cfg.also_on_first_message === true) score = 0;
-      }
-      if (score >= 0) {
-        if (!best || score > best.score) best = { flow, score };
+      if (!questionForAi && isFirstInbound && cfg.also_on_first_message === true) {
+        firstMessageHit ??= flow;
         continue;
       }
       keywordCandidates.push(flow);
@@ -783,15 +751,13 @@ async function findEntryFlow(
       isFirstInbound &&
       !questionForAi
     ) {
-      // A literal keyword hit (scored below) is more specific than "any
-      // first message", so it wins; otherwise the first such flow starts.
       firstInbound ??= flow;
     }
     // 'manual' triggers do not auto-start from inbound messages.
   }
-  if (best && best.score > 0) return best.flow;
-  if (firstInbound) return firstInbound;
   if (best) return best.flow;
+  if (firstMessageHit) return firstMessageHit;
+  if (firstInbound) return firstInbound;
 
   // No literal keyword hit. Ask the account's configured AI model (if
   // any) whether the message's intent matches one of the keyword-trigger
@@ -2480,8 +2446,15 @@ async function handleReplyForActiveRun(
       });
     }
 
-    // Re-send the same prompt. Same node, no current_node_key change.
-    await resendStep(db, run, currentNode, contact);
+    // Re-send the step, same node, no current_node_key change — except
+    // for collect_input, where clarifyText above already explains what's
+    // expected. Re-sending its full prompt_text on top of that repeats
+    // long prompts (e.g. the welcome message) on every bad reply; a
+    // send_buttons/send_list step still needs resending since its options
+    // actually have to reappear for the customer to tap.
+    if (currentNode.node_type !== "collect_input") {
+      await resendStep(db, run, currentNode, contact);
+    }
     return { consumed: true, flow_run_id: run.id, outcome: "fallback_fired" };
   }
   if (action.type === "handoff") {
