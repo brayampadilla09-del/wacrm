@@ -52,9 +52,12 @@ export interface LayoutOptions {
   defaultWidth?: number;
   /** Default node height when a node's height isn't measured yet. */
   defaultHeight?: number;
+  /** Node the conversation starts from; becomes the first root so the
+   *  flow reads from it outward. Falls back to nodes with no incoming edge. */
+  entryId?: string;
 }
 
-const DEFAULTS: Required<LayoutOptions> = {
+const DEFAULTS: Required<Omit<LayoutOptions, "entryId">> = {
   direction: "TB",
   rankSep: 80,
   nodeSep: 60,
@@ -81,6 +84,120 @@ export function shouldAutoLayout(
 }
 
 /**
+ * Reduce the flow graph to a spanning tree that follows the conversation.
+ *
+ * Why not hand dagre the raw graph: real flows are full of "hub" nodes
+ * (a shared fallback / handoff / next-question that a dozen branches all
+ * point at). Fed to dagre as-is, every hub drags its many parents toward
+ * itself and the branches get interleaved, so related steps end up far
+ * apart. Instead:
+ *   1. DFS from the entry (slot order) to find back edges (loops), which
+ *      must not influence placement.
+ *   2. Longest-path rank on what remains, so a node always sits after
+ *      everything that leads into it.
+ *   3. Each node keeps ONE parent: the deepest one feeding it (ties go to
+ *      the earliest in DFS order). That keeps every branch's subtree
+ *      together under the step that actually leads into it; the other
+ *      edges into a hub are still drawn, they just don't pull it around.
+ * Children are emitted in outgoing-slot order, so buttons / list rows
+ * keep their top-to-bottom order.
+ */
+function spanningTree(
+  ids: string[],
+  edges: LayoutEdge[],
+  entryId?: string,
+): { order: string[]; treeEdges: LayoutEdge[] } {
+  const known = new Set(ids);
+  const out = new Map<string, string[]>();
+  const indeg = new Map<string, number>();
+  for (const id of ids) out.set(id, []);
+  const seen = new Set<string>();
+  for (const e of edges) {
+    if (!known.has(e.source) || !known.has(e.target)) continue;
+    if (e.source === e.target) continue;
+    const key = `${e.source}\u0000${e.target}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.get(e.source)!.push(e.target);
+    indeg.set(e.target, (indeg.get(e.target) ?? 0) + 1);
+  }
+
+  const roots: string[] = [];
+  if (entryId && known.has(entryId)) roots.push(entryId);
+  for (const id of ids) if (!indeg.get(id) && id !== entryId) roots.push(id);
+  // Nodes only reachable through a cycle, with no root of their own.
+  for (const id of ids) if (!roots.includes(id)) roots.push(id);
+
+  // 1. DFS: discovery order, finish order, back edges.
+  const state = new Map<string, 1 | 2>();
+  const disc = new Map<string, number>();
+  const post: string[] = [];
+  const back = new Set<string>();
+  const visit = (u: string) => {
+    state.set(u, 1);
+    disc.set(u, disc.size);
+    for (const v of out.get(u)!) {
+      const st = state.get(v);
+      if (st === 1) back.add(`${u}\u0000${v}`);
+      else if (!st) visit(v);
+    }
+    state.set(u, 2);
+    post.push(u);
+  };
+  for (const r of roots) if (!state.get(r)) visit(r);
+
+  // 2. Longest-path rank in topological (reverse finish) order.
+  const preds = new Map<string, string[]>();
+  for (const id of ids) preds.set(id, []);
+  for (const [u, vs] of out)
+    for (const v of vs)
+      if (!back.has(`${u}\u0000${v}`)) preds.get(v)!.push(u);
+  const rank = new Map<string, number>();
+  for (const v of [...post].reverse()) {
+    let r = 0;
+    for (const u of preds.get(v)!) r = Math.max(r, (rank.get(u) ?? 0) + 1);
+    rank.set(v, r);
+  }
+
+  // 3. One parent per node: deepest feeder, earliest discovered on ties.
+  const parent = new Map<string, string>();
+  for (const v of ids) {
+    let best: string | null = null;
+    for (const u of preds.get(v)!) {
+      if (
+        best === null ||
+        rank.get(u)! > rank.get(best)! ||
+        (rank.get(u) === rank.get(best) && disc.get(u)! < disc.get(best)!)
+      ) {
+        best = u;
+      }
+    }
+    if (best !== null) parent.set(v, best);
+  }
+
+  const children = new Map<string, string[]>();
+  for (const id of ids) children.set(id, []);
+  for (const [u, vs] of out)
+    for (const v of vs) if (parent.get(v) === u) children.get(u)!.push(v);
+
+  const order: string[] = [];
+  const placed = new Set<string>();
+  const emit = (u: string) => {
+    if (placed.has(u)) return;
+    placed.add(u);
+    order.push(u);
+    for (const c of children.get(u)!) emit(c);
+  };
+  for (const r of roots) if (!parent.has(r)) emit(r);
+  for (const id of ids) emit(id);
+
+  const treeEdges: LayoutEdge[] = [];
+  for (const u of order)
+    for (const c of children.get(u)!) treeEdges.push({ source: u, target: c });
+  return { order, treeEdges };
+}
+
+/**
  * Compute positions for every node id. Returns a map keyed by node
  * id; consumers merge it into their React-Flow nodes array. The
  * returned coordinates are the TOP-LEFT corner (matches React-Flow's
@@ -99,21 +216,24 @@ export function autoLayout(
     nodesep: opts.nodeSep,
   });
 
-  for (const n of nodes) {
-    g.setNode(n.id, {
+  // Insert nodes in flow order (dagre keeps insertion order as the
+  // within-rank order) and only the spanning-tree edges. Dangling edges
+  // are dropped inside spanningTree: dagre would otherwise insert them as
+  // zero-size nodes and warp the layout.
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const { order, treeEdges } = spanningTree(
+    nodes.map((n) => n.id),
+    edges,
+    options.entryId,
+  );
+  for (const id of order) {
+    const n = byId.get(id)!;
+    g.setNode(id, {
       width: n.width ?? opts.defaultWidth,
       height: n.height ?? opts.defaultHeight,
     });
   }
-  for (const e of edges) {
-    // Dagre tolerates edges to/from non-existent nodes by inserting
-    // them as zero-size — that would silently warp the layout. Skip
-    // dangling edges instead; the canvas's edge derivation already
-    // filters them but defending here keeps this helper standalone.
-    if (g.node(e.source) && g.node(e.target)) {
-      g.setEdge(e.source, e.target);
-    }
-  }
+  for (const e of treeEdges) g.setEdge(e.source, e.target);
 
   Dagre.layout(g);
 

@@ -108,10 +108,55 @@ interface NodeData extends Record<string, unknown> {
 }
 
 const NODE_WIDTH = 240;
-// Best-effort default; actual height varies by summary length but
-// dagre needs SOMETHING to compute rank spacing. Underestimating is
-// safer than over (tighter layout that still doesn't overlap).
+// Used only to center newly added nodes; layout uses real or estimated
+// per-node sizes (see layoutBuilderNodes).
 const NODE_HEIGHT = 90;
+
+// Card chrome measured from FlowNodeCard: py-3 (24) + header chip row (24)
+// + key line (mt-2 + ~16) + optional 2-line summary (mt-1 + ~34), and for
+// multi-slot nodes a divider block (mt-2.5 + pt-2.5 + border ~ 21) plus
+// ~22px per slot row (gap-1 included).
+function estimateNodeHeight(node: BuilderNode): number {
+  const slots = outgoingSlots(node).length;
+  const hasSummary = Boolean(summarizeNode(node));
+  let h = 24 + 24 + 24 + (hasSummary ? 38 : 0);
+  if (slots > 1) h += 21 + slots * 22;
+  return h;
+}
+
+/**
+ * Dagre layout using each card's real rendered size when React Flow has
+ * measured it (auto-arrange button), else a per-node estimate (initial
+ * hydration, before first paint). A flat 90px height was far shorter than
+ * multi-slot cards, so ranks were packed too tight and cards overlapped.
+ *
+ * Left-to-right because handles live on the left (in) and right (out)
+ * edges of each card, so edges flow the way the handles point.
+ */
+function layoutBuilderNodes(
+  nodes: BuilderNode[],
+  entryId: string | null,
+  measured?: Map<string, { width?: number; height?: number }>
+) {
+  const edges = deriveCanvasEdges(nodes);
+  return autoLayout(
+    nodes.map((n) => {
+      const m = measured?.get(n.node_key);
+      return {
+        id: n.node_key,
+        width: m?.width ?? NODE_WIDTH,
+        height: m?.height ?? estimateNodeHeight(n),
+      };
+    }),
+    edges.map((e) => ({ source: e.source, target: e.target })),
+    {
+      direction: 'LR',
+      rankSep: 120,
+      nodeSep: 48,
+      entryId: entryId ?? undefined,
+    }
+  );
+}
 
 // ============================================================
 // Custom node — one card per flow node, styled to match the list
@@ -300,20 +345,10 @@ function FlowCanvasInner() {
   );
 
   const autoLayoutPositions = useMemo(() => {
-    const canvasEdges = deriveCanvasEdges(builderNodes);
-
     return shouldAutoLayout(builderNodes)
-      ? autoLayout(
-          builderNodes.map((n) => ({
-            id: n.node_key,
-            width: NODE_WIDTH,
-            height: NODE_HEIGHT,
-          })),
-          canvasEdges.map((e) => ({ source: e.source, target: e.target })),
-          { direction: 'TB' }
-        )
+      ? layoutBuilderNodes(builderNodes, entryNodeId)
       : null;
-  }, [builderNodes]);
+  }, [builderNodes, entryNodeId]);
 
   // If dagre had to place an all-zero flow, persist the generated
   // positions into editor state once. Otherwise the next drag would
@@ -805,15 +840,13 @@ function CanvasAutoArrangeButton({
   nodes: BuilderNode[];
 }) {
   const reactFlow = useReactFlow();
-  const { applyAutoLayout } = useFlowEditor();
+  const { applyAutoLayout, state } = useFlowEditor();
 
   const handleClick = () => {
-    const canvasEdges = deriveCanvasEdges(nodes);
-    const positions = autoLayout(
-      nodes.map((n) => ({ id: n.node_key, width: NODE_WIDTH, height: NODE_HEIGHT })),
-      canvasEdges.map((e) => ({ source: e.source, target: e.target })),
-      { direction: 'TB' }
+    const measured = new Map(
+      reactFlow.getNodes().map((n) => [n.id, n.measured ?? {}])
     );
+    const positions = layoutBuilderNodes(nodes, state.entry_node_id, measured);
     applyAutoLayout(Object.fromEntries([...positions]));
     // Positions land in state on this render; fitView needs the next
     // one to see the new node coordinates, hence the rAF deferral.
