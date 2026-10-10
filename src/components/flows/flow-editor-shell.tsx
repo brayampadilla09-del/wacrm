@@ -25,11 +25,11 @@
  */
 
 import { useEffect, useState } from "react";
-import { GitFork, List } from "lucide-react";
+import { GitFork, List, Loader2, Maximize2, Minimize2, Save } from "lucide-react";
 
 import { FlowBuilder } from "./flow-builder";
 import { FlowCanvas } from "./flow-canvas";
-import { FlowEditorProvider } from "./flow-editor-state";
+import { FlowEditorProvider, useFlowEditor } from "./flow-editor-state";
 import { EditorHeader } from "./header";
 import { ValidationPanel } from "./validation-panel";
 import { NODE_META, nodeColors, type NodeType } from "./shared";
@@ -93,16 +93,37 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
     }
   };
 
+  // Full-screen covers the dashboard chrome (sidebar/topbar) so a big flow
+  // gets the whole viewport. z-40 stays under the node-edit Sheet (z-50,
+  // portaled) so the side panel still opens on top. Esc exits, unless a
+  // Sheet/dialog is open (Radix handles that Esc itself).
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
   return (
     <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
-      <div className="flex h-full min-h-0 flex-col">
-        <EditorHeader />
+      <div
+        className={cn(
+          "flex min-h-0 flex-col",
+          fullscreen ? "fixed inset-0 z-40 bg-background" : "h-full",
+        )}
+      >
+        {!fullscreen && <EditorHeader />}
 
         {/* ---- mode row: view toggle + node-type legend ----
             Omitted entirely on mobile (canvas is unavailable there and
             the legend is lg-only), so there's no empty band above the
             stage on small screens. */}
-        {!isMobile && (
+        {!isMobile && !fullscreen && (
           <div className="flex items-center gap-4 px-6 py-3.5">
             <div
               role="group"
@@ -139,8 +160,16 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
           </div>
         )}
 
-        {/* ---- stage: the active view, owning its own overflow ---- */}
-        <div className="relative mx-6 min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card-2">
+        {/* ---- stage: the active view, owning its own overflow ----
+            In full screen the stage is the whole viewport: no margins,
+            border or radius, and the header / mode row / validation bar
+            are unmounted so only the flow canvas remains. */}
+        <div
+          className={cn(
+            "relative min-h-0 flex-1 overflow-hidden bg-card-2",
+            fullscreen ? "" : "mx-6 rounded-xl border border-border",
+          )}
+        >
           {effectiveView === "canvas" ? (
             <FlowCanvas />
           ) : (
@@ -148,14 +177,74 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
               <FlowBuilder />
             </div>
           )}
+          {!isMobile && (
+            <StageControls
+              fullscreen={fullscreen}
+              onToggle={() => setFullscreen((v) => !v)}
+            />
+          )}
         </div>
 
         {/* ---- validation / activate-readiness bar ---- */}
-        <div className="px-6 pb-5 pt-3">
-          <ValidationPanel />
-        </div>
+        {!fullscreen && (
+          <div className="px-6 pb-5 pt-3">
+            <ValidationPanel />
+          </div>
+        )}
       </div>
     </FlowEditorProvider>
+  );
+}
+
+/**
+ * Floating top-right cluster over the stage: the full-screen toggle, plus
+ * Save while in full screen (the toolbar is hidden there, and edits made
+ * in the node sheet would otherwise have no way to be persisted).
+ */
+function StageControls({
+  fullscreen,
+  onToggle,
+}: {
+  fullscreen: boolean;
+  onToggle: () => void;
+}) {
+  const { dirty, saving, save } = useFlowEditor();
+  const btn =
+    "pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-[12.5px] font-medium text-foreground shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] transition-colors hover:bg-muted";
+  return (
+    <div className="pointer-events-none absolute right-4 top-4 z-10 flex items-center gap-2">
+      {fullscreen && (
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saving}
+          className={btn}
+        >
+          {saving ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Save className="h-3.5 w-3.5" />
+          )}
+          Save
+          {dirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-pressed={fullscreen}
+        title={fullscreen ? "Exit full screen (Esc)" : "Full screen"}
+        aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+        className={btn}
+      >
+        {fullscreen ? (
+          <Minimize2 className="h-3.5 w-3.5" />
+        ) : (
+          <Maximize2 className="h-3.5 w-3.5" />
+        )}
+        {fullscreen ? "Exit full screen" : "Full screen"}
+      </button>
+    </div>
   );
 }
 
