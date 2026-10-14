@@ -36,7 +36,10 @@ function supabaseAdmin() {
 
 interface WhatsAppMessage {
   id: string
-  from: string
+  /** Teléfono. Ausente cuando el usuario oculta su número (nombre de usuario). */
+  from?: string
+  /** BSUID: identificador del usuario que Meta manda aunque oculte el teléfono. */
+  from_user_id?: string
   timestamp: string
   type: string
   text?: { body: string }
@@ -73,7 +76,8 @@ interface WhatsAppWebhookEntry {
       }
       contacts?: Array<{
         profile: { name: string }
-        wa_id: string
+        wa_id?: string
+        user_id?: string
       }>
       messages?: WhatsAppMessage[]
       statuses?: Array<StatusUpdate>
@@ -601,7 +605,7 @@ async function handleReaction(
 
 async function processMessage(
   message: WhatsAppMessage,
-  contact: { profile: { name: string }; wa_id: string },
+  contact: { profile: { name: string }; wa_id?: string; user_id?: string },
   // Tenancy. Resolved from the matched whatsapp_config row; every
   // contact / conversation / message row created downstream is
   // stamped with this so any member of the account can see it.
@@ -620,8 +624,9 @@ async function processMessage(
   configOwnerUserId: string,
   accessToken: string
 ) {
-  const senderPhone = normalizePhone(message.from)
-  const contactName = contact.profile.name
+  const senderPhone = normalizePhone(message.from ?? contact.wa_id ?? '')
+  const senderBsuid = message.from_user_id ?? contact.user_id ?? null
+  const contactName = contact.profile?.name ?? ''
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
@@ -629,7 +634,8 @@ async function processMessage(
     channelId,
     configOwnerUserId,
     senderPhone,
-    contactName
+    contactName,
+    senderBsuid
   )
   if (!contactOutcome) return
   const contactRecord = contactOutcome.contact
@@ -1108,8 +1114,30 @@ async function findOrCreateContact(
   channelId: string,
   configOwnerUserId: string,
   phone: string,
-  name: string
+  name: string,
+  bsuid: string | null = null
 ): Promise<ContactOutcome | null> {
+  // Quien oculta su número llega sin teléfono: se le busca por su BSUID. Sin esto cada mensaje
+  // suyo creaba un contacto y una conversación nuevos, y el flujo nunca seguía el hilo.
+  if (bsuid && !phone) {
+    const { data: byBsuid } = await supabaseAdmin()
+      .from('contacts')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('channel_id', channelId)
+      .eq('bsuid', bsuid)
+      .maybeSingle()
+    if (byBsuid) {
+      if (name && name !== byBsuid.name) {
+        await supabaseAdmin()
+          .from('contacts')
+          .update({ name, updated_at: new Date().toISOString() })
+          .eq('id', byBsuid.id)
+      }
+      return { contact: byBsuid, wasCreated: false }
+    }
+  }
+
   // Find an existing contact for this account+channel by phone. The
   // shared helper pre-filters in SQL by the last-8-digit suffix (so we
   // don't pull every contact on every inbound message) then applies the
@@ -1124,11 +1152,14 @@ async function findOrCreateContact(
   )
 
   if (existingContact) {
-    // Update name if it changed
-    if (name && name !== existingContact.name) {
+    // Update name if it changed (y guarda el BSUID si todavía no lo tenía)
+    const patch: Record<string, string> = {}
+    if (name && name !== existingContact.name) patch.name = name
+    if (bsuid && !existingContact.bsuid) patch.bsuid = bsuid
+    if (Object.keys(patch).length > 0) {
       await supabaseAdmin()
         .from('contacts')
-        .update({ name, updated_at: new Date().toISOString() })
+        .update({ ...patch, updated_at: new Date().toISOString() })
         .eq('id', existingContact.id)
     }
     return { contact: existingContact, wasCreated: false }
@@ -1146,7 +1177,8 @@ async function findOrCreateContact(
       channel_id: channelId,
       user_id: configOwnerUserId,
       phone,
-      name: name || phone,
+      bsuid,
+      name: name || phone || 'Contacto sin número',
     })
     .select()
     .single()

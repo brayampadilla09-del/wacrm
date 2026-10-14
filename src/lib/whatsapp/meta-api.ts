@@ -211,6 +211,17 @@ export async function getSubscribedApps(
   return data.data ?? []
 }
 
+// Un usuario de WhatsApp que oculta su número (nombre de usuario) llega sin teléfono: Meta solo
+// da su identificador (BSUID, p. ej. "CO.1349120865530274") y a ese se le responde por `recipient`
+// en vez de `to`. Un teléfono son solo dígitos, así que no se confunden.
+export function isBsuid(value: string): boolean {
+  return /^[A-Z]{2}\.[A-Za-z0-9]+$/.test(value)
+}
+
+function recipientField(to: string): Record<string, string> {
+  return isBsuid(to) ? { recipient: to } : { to }
+}
+
 // ============================================================
 // Sending
 // ============================================================
@@ -237,7 +248,7 @@ export async function sendTextMessage(
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to,
+    ...recipientField(to),
     type: 'text',
     text: { body: text },
   }
@@ -304,7 +315,7 @@ export async function sendMediaMessage(
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to,
+    ...recipientField(to),
     type: kind,
     [kind]: media,
   }
@@ -420,7 +431,7 @@ export async function sendTemplateMessage(
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to,
+    ...recipientField(to),
     type: 'template',
     template: templatePayload,
   }
@@ -691,7 +702,7 @@ export async function sendReactionMessage(
     body: JSON.stringify({
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...recipientField(to),
       type: 'reaction',
       reaction: { message_id: targetMessageId, emoji },
     }),
@@ -811,7 +822,7 @@ export async function sendInteractiveButtons(
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to,
+    ...recipientField(to),
     type: 'interactive',
     interactive,
   }
@@ -943,7 +954,7 @@ export async function sendInteractiveList(
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to,
+    ...recipientField(to),
     type: 'interactive',
     interactive,
   }

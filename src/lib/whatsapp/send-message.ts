@@ -27,6 +27,7 @@ import {
   sendMediaMessage,
   sendInteractiveButtons,
   sendInteractiveList,
+  isBsuid,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api';
 import {
@@ -247,7 +248,9 @@ export async function sendMessageToConversation(
   }
 
   const contact = conversation.contact;
-  if (!contact?.phone) {
+  // Quien oculta su número no tiene teléfono: se le responde por su BSUID.
+  const bsuid: string | null = contact?.bsuid || null;
+  if (!contact?.phone && !bsuid) {
     throw new SendMessageError(
       'bad_request',
       'Contact phone number not found',
@@ -255,8 +258,8 @@ export async function sendMessageToConversation(
     );
   }
 
-  const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitizedPhone)) {
+  const sanitizedPhone = contact.phone ? sanitizePhoneForMeta(contact.phone) : '';
+  if (sanitizedPhone ? !isValidE164(sanitizedPhone) : !bsuid || !isBsuid(bsuid)) {
     throw new SendMessageError(
       'bad_request',
       'Invalid phone number format',
@@ -418,9 +421,9 @@ export async function sendMessageToConversation(
   // with "recipient not in allowed list"; persist a working variant
   // back to the contact so the next send goes straight through.
   let waMessageId = '';
-  let workingPhone = sanitizedPhone;
+  let workingPhone = sanitizedPhone || bsuid!;
   try {
-    const variants = phoneVariants(sanitizedPhone);
+    const variants = sanitizedPhone ? phoneVariants(sanitizedPhone) : [bsuid!];
     let lastError: unknown = null;
 
     for (const variant of variants) {
@@ -449,7 +452,7 @@ export async function sendMessageToConversation(
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }
 
-  if (workingPhone !== sanitizedPhone) {
+  if (sanitizedPhone && workingPhone !== sanitizedPhone) {
     console.log(
       `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
     );
