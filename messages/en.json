@@ -264,6 +264,15 @@
       "cancel": "Cancel",
       "send": "Send template"
     },
+    "runFlow": {
+      "title": "Run flow manually",
+      "hint": "Emergency: use it if the bot did not reply. It closes the current run and starts the flow from the beginning.",
+      "run": "Run flow now",
+      "running": "Running…",
+      "confirm": "Run this flow now for this contact? Their current flow run will be closed.",
+      "started": "Flow started",
+      "error": "Could not run the flow"
+    },
     "sidebar": {
       "contactInfo": "Contact info",
       "tags": "Tags",

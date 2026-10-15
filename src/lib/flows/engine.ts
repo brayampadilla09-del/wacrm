@@ -2535,3 +2535,67 @@ async function startNewRun(
     outcome: outcome.outcome === "advanced" ? "started" : outcome.outcome,
   };
 }
+
+/**
+ * Arranque manual de un Flow (botón "Correr flow" del inbox): para cuando el bot no
+ * contestó (flow caído, cliente colgado en un paso, número oculto) y el equipo quiere
+ * correr el Flow ya mismo sin esperar a que el cliente escriba otra vez. Cierra el run
+ * activo del contacto, si lo hay, y arranca uno nuevo desde el nodo de entrada.
+ */
+export async function startFlowManually(args: {
+  accountId: string;
+  conversationId: string;
+  flowId: string;
+}): Promise<
+  | { ok: true; flowRunId: string | null; outcome: string }
+  | { ok: false; status: number; error: string }
+> {
+  const db = supabaseAdmin();
+  const { data: conversation } = await db
+    .from("conversations")
+    .select("id, account_id, contact_id, channel_id")
+    .eq("id", args.conversationId)
+    .eq("account_id", args.accountId)
+    .maybeSingle();
+  if (!conversation?.contact_id) {
+    return { ok: false, status: 404, error: "Conversation not found" };
+  }
+
+  const flow = await loadFlow(db, args.flowId);
+  if (!flow || flow.account_id !== args.accountId) {
+    return { ok: false, status: 404, error: "Flow not found" };
+  }
+  if (flow.status !== "active" || !flow.entry_node_id) {
+    return { ok: false, status: 409, error: "El flow no está activo" };
+  }
+  if (flow.channel_id !== conversation.channel_id) {
+    return { ok: false, status: 409, error: "El flow es de otro número de WhatsApp" };
+  }
+
+  const { data: activeRuns } = await db
+    .from("flow_runs")
+    .select("id")
+    .eq("account_id", args.accountId)
+    .eq("contact_id", conversation.contact_id)
+    .eq("status", "active");
+  for (const r of (activeRuns ?? []) as { id: string }[]) {
+    await logEvent(db, r.id, "fallback_fired", null, { action: "restarted_manually" });
+    await endRun(db, r.id, "completed", "restarted_manually");
+  }
+
+  const nodes = await loadAllNodes(db, flow.id);
+  const result = await startNewRun(
+    db,
+    flow,
+    {
+      accountId: args.accountId,
+      channelId: flow.channel_id,
+      userId: flow.user_id,
+      contactId: conversation.contact_id,
+      conversationId: conversation.id,
+      message: { kind: "text", text: "", meta_message_id: `manual-${Date.now()}` },
+    },
+    nodes,
+  );
+  return { ok: true, flowRunId: result.flow_run_id ?? null, outcome: result.outcome ?? "no_match" };
+}

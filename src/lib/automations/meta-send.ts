@@ -6,12 +6,10 @@ import {
 } from '@/lib/flows/meta-send'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { renderTemplateBody } from '@/lib/whatsapp/template-render'
+import { hasRecipient, recipientVariants, resolveRecipient } from '@/lib/whatsapp/recipient'
 import { supabaseAdmin } from './admin-client'
 import { resolveChannelConfig } from '@/lib/whatsapp/channels'
 
@@ -120,18 +118,15 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone, channel_id')
+    .select('id, phone, bsuid, channel_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact || !hasRecipient(contact)) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`)
-  }
+  const sanitized = resolveRecipient(contact)
 
   // Send through the contact's own channel (migration 039) — an
   // account can have more than one whatsapp_config row now, so this
@@ -189,7 +184,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Same phone-variant retry as /api/whatsapp/send — Meta sandbox and
   // numbers registered with/without a trunk 0 both require this to
   // reliably land a message.
-  const variants = phoneVariants(sanitized)
+  const variants = recipientVariants(sanitized)
   let workingPhone = sanitized
   let waMessageId = ''
   let lastError: unknown = null
