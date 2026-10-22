@@ -32,7 +32,7 @@ export function RunFlowButton({ conversationId, channelId }: RunFlowButtonProps)
     createClient()
       .from("flows")
       .select("id, name")
-      .eq("status", "active")
+      .or("status.eq.active,and(status.eq.draft,coming_soon_mode.eq.off_only)")
       .eq("channel_id", channelId)
       .order("name")
       .then(({ data }) => {
