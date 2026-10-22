@@ -2157,7 +2157,11 @@ async function handleReplyForActiveRun(
         const cfg = currentNode.config as unknown as SendListNodeConfig;
         if (cfg.dynamic) {
           const rows = resolveVarArray(run.vars, cfg.dynamic.rows_var);
-          const hit = rows.find((r) => r.id === resolvedReplyId);
+          const hit =
+            rows.find((r) => r.id === resolvedReplyId) ??
+            (cfg.dynamic.also_rows_vars ?? [])
+              .flatMap((v) => resolveVarArray(run.vars, v))
+              .find((r) => r.id === resolvedReplyId);
           if (hit) {
             captures[cfg.dynamic.capture_title_var] = hit.title;
             captures[cfg.dynamic.capture_id_var] = hit.id;

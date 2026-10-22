@@ -88,6 +88,10 @@ export interface SendListNodeConfig {
      *  `{id: string; title: string; description?: string}` — e.g.
      *  "avail.options" reads `vars.avail.options`. */
     rows_var: string;
+    /** Other row arrays (same shape) whose rows are still valid taps, e.g. the
+     *  previous page of the same list: a tap on an older copy of the list is
+     *  accepted instead of rejected as stale. */
+    also_rows_vars?: string[];
     /** vars key to store the tapped option's `title`. */
     capture_title_var: string;
     /** vars key to store the tapped option's `id`. */
