@@ -46,7 +46,6 @@ import {
   classifyCancelIntent,
 } from "./ai-router";
 import { assistOffScriptReply, aiAutoReplyWillAnswer } from "./ai-assist";
-import { hasEarlyAccessTag } from "@/lib/ai/config";
 import { recordHandoffSummary } from "@/lib/ai/summary";
 import type { HandoffReason } from "@/lib/ai/handoff";
 import type { FlowStepContext } from "@/lib/ai/defaults";
@@ -2566,13 +2565,7 @@ export async function startFlowManually(args: {
   if (!flow || flow.account_id !== args.accountId) {
     return { ok: false, status: 404, error: "Flow not found" };
   }
-  // En modo coming soon el menú normal queda en borrador; correrlo a mano
-  // sobre un contacto con la etiqueta de acceso anticipado sí se permite.
-  const earlyAccess =
-    flow.status === "draft" &&
-    (flow as FlowRow & { coming_soon_mode?: string }).coming_soon_mode === "off_only" &&
-    (await hasEarlyAccessTag(db, conversation.contact_id));
-  if ((flow.status !== "active" && !earlyAccess) || !flow.entry_node_id) {
+  if (flow.status !== "active" || !flow.entry_node_id) {
     return { ok: false, status: 409, error: "El flow no está activo" };
   }
   if (flow.channel_id !== conversation.channel_id) {

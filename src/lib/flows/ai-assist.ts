@@ -59,7 +59,7 @@ export async function assistOffScriptReply(
   if (!text.trim()) return UNAVAILABLE;
 
   try {
-    const config = await loadAiConfig(db, accountId, { contactId });
+    const config = await loadAiConfig(db, accountId);
     if (!config || !config.autoReplyEnabled) return UNAVAILABLE;
 
     const { data: conv } = await db
