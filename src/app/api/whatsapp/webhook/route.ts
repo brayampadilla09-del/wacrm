@@ -1084,12 +1084,23 @@ async function parseMessageContent(
     case 'reaction':
       return { ...empty, contentText: message.reaction?.emoji || null }
 
-    case 'button':
+    case 'button': {
       // Quick-reply button of a TEMPLATE message (Meta type "button", not
-      // "interactive"). Its visible text becomes the message text so keyword
-      // flows can route it, e.g. "Sí, confirmo" on the reschedule-request
-      // template. Without this the tap was stored as "[Unsupported message type]".
-      return { ...empty, contentText: message.button?.text || message.button?.payload || null }
+      // "interactive"; it can't be typed). The reschedule-request template's two
+      // buttons are routed like the interactive ones: "reprog_yes" / "reprog_no"
+      // (by payload, or by the visible text if the payload is not an id).
+      const text = message.button?.text || message.button?.payload || null
+      const payload = message.button?.payload ?? ''
+      const norm = (text ?? '').trim().toLowerCase()
+      const replyId = payload.startsWith('reprog_')
+        ? payload
+        : norm === 'sí, confirmo' || norm === 'si, confirmo'
+          ? 'reprog_yes'
+          : norm === 'no me sirve'
+            ? 'reprog_no'
+            : undefined
+      return { ...empty, contentText: text, interactiveReplyId: replyId ?? null }
+    }
 
     case 'interactive': {
       // The customer tapped a reply button or a list row on a message

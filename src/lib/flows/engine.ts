@@ -715,14 +715,14 @@ async function findEntryFlow(
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
   // Exception: the buttons pagina-estudio sends when the team proposes a new
-  // appointment time (reply ids "reprog_*", sent by lib/reschedule-request-service.ts)
-  // arrive with no active run waiting for them, so their visible title is
-  // matched like typed text by the exact-keyword reschedule-answer flows.
-  const message: ParsedInbound =
-    inbound.kind === "interactive_reply" && inbound.reply_id.startsWith("reprog_")
-      ? { kind: "text", text: inbound.reply_title, meta_message_id: inbound.meta_message_id }
-      : inbound;
-  if (message.kind !== "text") return null;
+  // appointment time (reply ids "reprog_*") arrive with no active run waiting
+  // for them. They start the 'manual' flow whose trigger_config.button_id is
+  // that id, and ONLY a real button tap does: typed text never matches, and
+  // 'manual' flows are out of the keyword and AI-intent matching below.
+  const tapId =
+    inbound.kind === "interactive_reply" && inbound.reply_id.startsWith("reprog_") ? inbound.reply_id : null;
+  if (!tapId && inbound.kind !== "text") return null;
+  const message = inbound as Extract<ParsedInbound, { kind: "text" }>;
 
   // Pull all active flows for this account+channel (migration 039 — an
   // account's two numbers run independent flows). Active set is bounded
@@ -735,6 +735,13 @@ async function findEntryFlow(
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
+  if (tapId) {
+    return (
+      typed.find(
+        (f) => f.trigger_type === "manual" && (f.trigger_config as { button_id?: string }).button_id === tapId,
+      ) ?? null
+    );
+  }
   const keywordCandidates: FlowRow[] = [];
   // Every keyword flow that matches competes: highest `priority`, then the
   // longest matching keyword (most specific), then the oldest flow. See
