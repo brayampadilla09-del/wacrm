@@ -700,7 +700,7 @@ async function findEntryFlow(
   db: AdminClient,
   accountId: string,
   channelId: string,
-  message: ParsedInbound,
+  inbound: ParsedInbound,
   isFirstInbound: boolean,
   /**
    * The message is a question and the AI auto-reply will answer it if no
@@ -714,6 +714,14 @@ async function findEntryFlow(
 ): Promise<FlowRow | null> {
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
+  // Exception: the buttons pagina-estudio sends when the team proposes a new
+  // appointment time (reply ids "reprog_*", sent by lib/reschedule-request-service.ts)
+  // arrive with no active run waiting for them, so their visible title is
+  // matched like typed text by the exact-keyword reschedule-answer flows.
+  const message: ParsedInbound =
+    inbound.kind === "interactive_reply" && inbound.reply_id.startsWith("reprog_")
+      ? { kind: "text", text: inbound.reply_title, meta_message_id: inbound.meta_message_id }
+      : inbound;
   if (message.kind !== "text") return null;
 
   // Pull all active flows for this account+channel (migration 039 — an

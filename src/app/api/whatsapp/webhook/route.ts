@@ -61,6 +61,8 @@ interface WhatsAppMessage {
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
   }
+  /** Quick-reply tap on a template message (type "button"). */
+  button?: { text?: string; payload?: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
 }
@@ -1081,6 +1083,13 @@ async function parseMessageContent(
 
     case 'reaction':
       return { ...empty, contentText: message.reaction?.emoji || null }
+
+    case 'button':
+      // Quick-reply button of a TEMPLATE message (Meta type "button", not
+      // "interactive"). Its visible text becomes the message text so keyword
+      // flows can route it, e.g. "Sí, confirmo" on the reschedule-request
+      // template. Without this the tap was stored as "[Unsupported message type]".
+      return { ...empty, contentText: message.button?.text || message.button?.payload || null }
 
     case 'interactive': {
       // The customer tapped a reply button or a list row on a message
