@@ -697,11 +697,39 @@ export function looksLikeQuestion(text: string): boolean {
   return QUESTION_OPENER.test(normalizeText(text));
 }
 
+/**
+ * Buttons of messages the team sends (reschedule request, proposal ready) arrive
+ * with no run waiting for them. The main flow lists, in
+ * `trigger_config.button_entries`, which node each one enters ({"reprog_yes":
+ * "reprog_accept_fetch", ...}). Only a real button tap enters there: typed text
+ * never does, and the AI intent classifier never sees these branches.
+ */
+async function findButtonEntry(
+  db: AdminClient,
+  accountId: string,
+  channelId: string,
+  replyId: string,
+): Promise<{ flow: FlowRow; nodeKey: string } | null> {
+  const { data, error } = await db
+    .from("flows")
+    .select("*")
+    .eq("account_id", accountId)
+    .eq("channel_id", channelId)
+    .eq("status", "active");
+  if (error || !data) return null;
+  for (const flow of data as FlowRow[]) {
+    const entries = (flow.trigger_config as { button_entries?: Record<string, string> }).button_entries;
+    const nodeKey = entries?.[replyId];
+    if (nodeKey) return { flow, nodeKey };
+  }
+  return null;
+}
+
 async function findEntryFlow(
   db: AdminClient,
   accountId: string,
   channelId: string,
-  inbound: ParsedInbound,
+  message: ParsedInbound,
   isFirstInbound: boolean,
   /**
    * The message is a question and the AI auto-reply will answer it if no
@@ -715,15 +743,9 @@ async function findEntryFlow(
 ): Promise<FlowRow | null> {
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
-  // Exception: the buttons pagina-estudio sends when the team proposes a new
-  // appointment time (reply ids "reprog_*", and "propuesta_*" for the proposal-ready template) arrive with no active run waiting
-  // for them. They start the 'manual' flow whose trigger_config.button_id is
-  // that id, and ONLY a real button tap does: typed text never matches, and
-  // 'manual' flows are out of the keyword and AI-intent matching below.
-  const tapId =
-    inbound.kind === "interactive_reply" && isTapEntryId(inbound.reply_id) ? inbound.reply_id : null;
-  if (!tapId && inbound.kind !== "text") return null;
-  const message = inbound as Extract<ParsedInbound, { kind: "text" }>;
+  // (The buttons of messages the team sends, "reprog_*" / "propuesta_*", enter
+  // the main flow at a given node instead: see findButtonEntry.)
+  if (message.kind !== "text") return null;
 
   // Pull all active flows for this account+channel (migration 039 — an
   // account's two numbers run independent flows). Active set is bounded
@@ -736,13 +758,7 @@ async function findEntryFlow(
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
-  if (tapId) {
-    return (
-      typed.find(
-        (f) => f.trigger_type === "manual" && (f.trigger_config as { button_id?: string }).button_id === tapId,
-      ) ?? null
-    );
-  }
+
   const keywordCandidates: FlowRow[] = [];
   // Every keyword flow that matches competes: highest `priority`, then the
   // longest matching keyword (most specific), then the oldest flow. See
@@ -1965,6 +1981,23 @@ export async function dispatchInboundToFlows(
       input.contactId,
     );
 
+    // A button of a message the team sent (reschedule request, proposal ready)
+    // enters the main flow at its own branch, even if the customer was in the
+    // middle of the menu: that run is closed so the tap isn't read as a reply
+    // to the menu prompt.
+    if (input.message.kind === "interactive_reply" && isTapEntryId(input.message.reply_id)) {
+      const entry = await findButtonEntry(db, input.accountId, input.channelId, input.message.reply_id);
+      if (entry) {
+        if (activeRun) {
+          const dupe = await isDuplicateInbound(db, input.accountId, input.contactId, input.message.meta_message_id);
+          if (dupe) return { consumed: true, flow_run_id: activeRun.id, outcome: "duplicate_inbound_ignored" };
+          await endRun(db, activeRun.id, "completed", "button_entry");
+        }
+        const nodes = await loadAllNodes(db, entry.flow.id);
+        if (nodes.has(entry.nodeKey)) return startNewRun(db, entry.flow, input, nodes, entry.nodeKey);
+      }
+    }
+
     // Idempotency — only matters if there's already a run for this
     // contact. For new runs, the partial unique index catches duplicate
     // starts at INSERT time.
@@ -2595,7 +2628,9 @@ async function startNewRun(
   flow: FlowRow,
   input: DispatchInboundInput,
   nodes: Map<string, FlowNodeRow>,
+  entryNodeKey?: string,
 ): Promise<DispatchInboundResult> {
+  const startKey = entryNodeKey ?? flow.entry_node_id;
   // INSERT — partial unique index `idx_one_active_run_per_contact`
   // catches concurrent inserts with 23505. We catch and return as
   // consumed:true (the parallel webhook handles it).
@@ -2615,7 +2650,7 @@ async function startNewRun(
       contact_id: input.contactId,
       conversation_id: input.conversationId,
       status: "active",
-      current_node_key: flow.entry_node_id,
+      current_node_key: startKey,
     })
     .select("*")
     .maybeSingle();
@@ -2632,7 +2667,7 @@ async function startNewRun(
   if (input.conversationId) {
     await resetConversationAiState(db, input.conversationId);
   }
-  await logEvent(db, run.id, "started", flow.entry_node_id, {
+  await logEvent(db, run.id, "started", startKey, {
     flow_id: flow.id,
     trigger_type: flow.trigger_type,
     meta_message_id: input.message.meta_message_id,
@@ -2654,7 +2689,7 @@ async function startNewRun(
   }
 
   // Run the advance loop starting from the entry node.
-  const outcome = await advanceFromNodeKey(db, run, flow.entry_node_id!, nodes);
+  const outcome = await advanceFromNodeKey(db, run, startKey!, nodes);
   return {
     consumed: true,
     flow_run_id: run.id,
