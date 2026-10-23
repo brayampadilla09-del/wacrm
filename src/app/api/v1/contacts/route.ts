@@ -4,7 +4,8 @@
 //
 // List is keyset-paginated (see src/lib/api/v1/pagination.ts) and
 // supports `?search=` (name/phone) and `?tag=<tagId>` filters. Create
-// is find-or-create by phone: an existing match returns 200 with
+// is find-or-create by phone (optional `tags`, `notify` and `context_note`
+// {kind:"proposal",text}; see docs/public-api.md): an existing match returns 200 with
 // `created: false`; a new row returns 201 with `created: true`.
 // ============================================================
 
@@ -25,6 +26,7 @@ import {
   ContactError,
 } from '@/lib/api/v1/contacts';
 import { notifyNewLead } from '@/lib/contacts/notify-new-lead';
+import { parseContextNote, saveProposalContextNote } from '@/lib/contacts/context-note';
 
 // PostgREST filter values are comma/paren-delimited; strip anything
 // that could break the `.or()` grammar before interpolating a search
@@ -111,6 +113,9 @@ export async function POST(request: Request) {
       return fail('bad_request', "'phone' is required", 400);
     }
 
+    // Validate before touching the DB so a bad note never leaves a half-made contact.
+    const contextNote = parseContextNote(body.context_note);
+
     const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
 
     const { id, created } = await findOrCreateContact(
@@ -141,6 +146,12 @@ export async function POST(request: Request) {
         tags,
         created ? 'replace' : 'add'
       );
+    }
+
+    // `context_note` (kind "proposal"): the summary the AI answers from while the
+    // contact carries the «Propuesta enviada» tag. See lib/ai/proposal-context.ts.
+    if (contextNote) {
+      await saveProposalContextNote(ctx.supabase, ctx.accountId, auditUserId, id, contextNote.text);
     }
 
     // Opt-in, not automatic: this endpoint is also used for bulk CSV

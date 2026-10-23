@@ -130,6 +130,34 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(systemPrompt).toContain('Returns accepted within 30 days.')
   })
 
+  it('answers from the proposal summary only (no knowledge base, business prompt replaced) when the contact just got a proposal', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({
+        systemPrompt: 'PROMPT NORMAL CON PRECIOS',
+        proposalContext: 'Plan: BSign Wellness. Valor final: $2.000.000.',
+      }),
+    )
+    h.retrieveKnowledge.mockResolvedValue(['KB que no debe usarse'])
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.retrieveKnowledge).not.toHaveBeenCalled()
+    const systemPrompt = h.generateReply.mock.calls[0][0].systemPrompt as string
+    expect(systemPrompt).toContain('Valor final: $2.000.000.')
+    expect(systemPrompt).toContain('qué quiere saber de ella')
+    expect(systemPrompt).not.toContain('PROMPT NORMAL CON PRECIOS')
+    expect(systemPrompt).not.toContain('KB que no debe usarse')
+    expect(h.engineSendText).toHaveBeenCalled()
+  })
+
+  it('hands off to the team (not the coming soon close) when the proposal question has no answer', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ proposalContext: 'Plan: BSign Sueño.', comingSoon: false }))
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.handOffConversationToHuman).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'ai_unsure' }),
+    )
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
   it('stands down when an active message-level automation exists', async () => {
     h.state.autoResponders = [{ id: 'auto-1' }]
     await dispatchInboundToAiReply(ARGS)

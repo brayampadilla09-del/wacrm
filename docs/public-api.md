@@ -215,6 +215,15 @@ at it. Off by default so CSV imports and manual adds don't fan out a
 notification per row. See `docs/meta-lead-ads.md` for the same
 notification fired from the Meta Lead Ads webhook.
 
+Pass `context_note: { "kind": "proposal", "text": "…" }` (text up to 3000
+characters) to store a design-proposal summary as the contact's single
+proposal note (a previous one is replaced). Together with the
+`Propuesta enviada` tag, the AI answers that contact's questions from the
+summary for 14 days, and the flow menu only starts with "menú". It also
+resets the AI reply budget and lifts an earlier handoff pause on the
+contact's unassigned conversations. Validated before anything is written
+(`400` if malformed).
+
 ### `GET` / `PATCH /api/v1/contacts/{id}`
 
 Read or update one contact. Scopes: `contacts:read` / `contacts:write`.

@@ -11,10 +11,11 @@ interface DbMessage {
  * Message kinds whose `content_text` is conversation the model should
  * see: plain text, interactive messages (a flow's menu prompt, or the
  * title of the button/row the customer tapped) and templates (the
- * appointment/order notifications the customer is often replying to).
+ * appointment/order notifications the customer is often replying to) and
+ * documents (only their caption, e.g. "Aquí tienes tu propuesta…").
  * Media without a caption carries no text and is left out.
  */
-export const CONTEXT_CONTENT_TYPES = ['text', 'interactive', 'template'] as const
+export const CONTEXT_CONTENT_TYPES = ['text', 'interactive', 'template', 'document'] as const
 
 /**
  * Fetch the last N text-bearing messages of a conversation and map them

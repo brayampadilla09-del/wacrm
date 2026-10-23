@@ -47,6 +47,7 @@ import {
 } from "./ai-router";
 import { assistOffScriptReply, aiAutoReplyWillAnswer } from "./ai-assist";
 import { hasEarlyAccessTag } from "@/lib/ai/config";
+import { isMenuRestart, loadProposalContext } from "@/lib/ai/proposal-context";
 import { recordHandoffSummary } from "@/lib/ai/summary";
 import type { HandoffReason } from "@/lib/ai/handoff";
 import type { FlowStepContext } from "@/lib/ai/defaults";
@@ -571,8 +572,10 @@ async function isDuplicateInbound(
 
 /**
  * True when a person typed in this conversation within
- * HUMAN_TAKEOVER_WINDOW_MS (templates excluded: pagina-estudio's API
- * sends are always templates). Shared with the AI auto-reply, which
+ * HUMAN_TAKEOVER_WINDOW_MS. Templates and automation sends
+ * (`messages.is_automation`: what pagina-estudio sends through the API with
+ * skip_flow_pause, e.g. the proposal PDF or the reschedule buttons) are not a
+ * person: counting them froze the bot for 12 h after a proposal. Shared with the AI auto-reply, which
  * must stay out of a thread an agent is working just like a new flow
  * run does.
  */
@@ -587,6 +590,7 @@ export async function hasRecentAgentMessage(
     .eq("conversation_id", conversationId)
     .eq("sender_type", "agent")
     .neq("content_type", "template")
+    .eq("is_automation", false)
     .gte("created_at", since);
   return (count ?? 0) > 0;
 }
@@ -2026,6 +2030,18 @@ export async function dispatchInboundToFlows(
     if (
       input.conversationStatusBeforeInbound !== "closed" &&
       (await isHumanHandlingConversation(db, input.accountId, input.contactId, input.conversationId))
+    ) {
+      return { consumed: false, outcome: "no_match" };
+    }
+
+    // The customer just received their proposal and the AI will answer about
+    // it: any text opens that conversation, not the menu. Only an explicit
+    // "menú" restarts the flow.
+    if (
+      input.message.kind === "text" &&
+      !isMenuRestart(input.message.text) &&
+      (await loadProposalContext(db, input.contactId)) &&
+      (await aiAutoReplyWillAnswer(db, input.accountId, input.conversationId))
     ) {
       return { consumed: false, outcome: "no_match" };
     }

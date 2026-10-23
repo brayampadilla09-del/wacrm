@@ -6,6 +6,7 @@ import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
+import { buildProposalPrompt } from './proposal-context'
 import { engineSendText } from '@/lib/flows/meta-send'
 import {
   handOffConversationToHuman,
@@ -167,16 +168,25 @@ export async function dispatchInboundToAiReply(
       return
     }
 
+    // Proposal mode: the customer just received their proposal PDF. The reply
+    // is grounded ONLY in that proposal's summary, so the knowledge base is
+    // skipped and the business prompt is replaced by the proposal one.
+    const proposalContext = config.proposalContext ?? null
+
     // Ground the reply in the account's knowledge base (best-effort).
-    const knowledge = await retrieveKnowledge(
-      db,
-      accountId,
-      config,
-      latestUserMessage(messages),
-    )
+    const knowledge = proposalContext
+      ? []
+      : await retrieveKnowledge(
+          db,
+          accountId,
+          config,
+          latestUserMessage(messages),
+        )
 
     const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
+      userPrompt: proposalContext
+        ? buildProposalPrompt(proposalContext)
+        : config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
       replyBudget: config.comingSoon

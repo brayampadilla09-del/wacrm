@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import type { AiConfig, AiProvider } from './types'
+import { loadProposalContext, PROPOSAL_MAX_REPLIES } from './proposal-context'
 
 interface AiConfigRow {
   provider: AiProvider
@@ -68,6 +69,15 @@ export async function loadAiConfig(
   if (row.coming_soon_enabled && contactId && (await hasEarlyAccessTag(db, contactId))) {
     row.coming_soon_enabled = false
   }
+  // Propuesta enviada: a contact who just received their proposal PDF gets the
+  // normal assistant (and the normal reply budget + handoff) even while the
+  // coming soon mode is on, so they can ask about it. The prompt itself is
+  // swapped for the proposal one in the auto-reply (see proposalContext).
+  let proposalContext: string | null = null
+  if (contactId) {
+    proposalContext = (await loadProposalContext(db, contactId))?.text ?? null
+    if (proposalContext && row.coming_soon_enabled) row.coming_soon_enabled = false
+  }
   // The Playground passes requireActive:false so an admin can test the
   // agent before flipping the master switch on.
   if (requireActive && !row.is_active) return null
@@ -110,9 +120,12 @@ export async function loadAiConfig(
     // larger reply budget; the normal one is left alone.
     autoReplyMaxPerConversation: row.coming_soon_enabled
       ? row.coming_soon_max_replies
-      : row.auto_reply_max_per_conversation,
+      : proposalContext
+        ? Math.max(row.auto_reply_max_per_conversation, PROPOSAL_MAX_REPLIES)
+        : row.auto_reply_max_per_conversation,
     handoffAgentId: row.handoff_agent_id,
     embeddingsApiKey,
+    proposalContext,
   }
 }
 

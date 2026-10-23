@@ -32,6 +32,10 @@ export interface AiConfig {
   /** "Modo muy pronto": `systemPrompt` already holds the coming-soon
    *  prompt and the knowledge base must not be consulted. */
   comingSoon?: boolean
+  /** Resumen de la propuesta que el cliente acaba de recibir (etiqueta
+   *  «Propuesta enviada» + nota reciente). Cuando existe, el auto-reply
+   *  responde solo con eso y el modo "muy pronto" no aplica. */
+  proposalContext?: string | null
 }
 
 /** A single conversation turn in the shape both providers accept. */

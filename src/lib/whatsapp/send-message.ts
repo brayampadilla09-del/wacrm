@@ -499,6 +499,9 @@ export async function sendMessageToConversation(
     .insert({
       conversation_id: conversationId,
       sender_type: 'agent',
+      // An automation's own send (skip_flow_pause: booking system templates,
+      // the proposal PDF…) is not a person taking over the thread.
+      is_automation: skipFlowPause === true,
       content_type: messageType,
       content_text: interactiveBody ?? resolvedContentText ?? null,
       media_url: mediaUrl || null,

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText } from '@/lib/flows/meta-send'
+import { loadProposalContext, PROPOSAL_INACTIVITY_HOURS } from '@/lib/ai/proposal-context'
 
 // A conversation with Bimi that's been waiting on the customer for this
 // long, with no reply, gets wrapped up instead of left open forever.
@@ -50,7 +51,7 @@ export async function closeInactiveConversations(
 
   const { data: candidates, error } = await db
     .from('conversations')
-    .select('id, account_id, contact_id, user_id, whatsapp_config!inner(kind)')
+    .select('id, account_id, contact_id, user_id, last_message_at, whatsapp_config!inner(kind)')
     .eq('status', 'open')
     .lte('last_message_at', cutoff)
     .eq('whatsapp_config.kind', 'bot')
@@ -69,7 +70,18 @@ export async function closeInactiveConversations(
     account_id: string
     contact_id: string
     user_id: string
+    last_message_at: string | null
   }[]) {
+    // The customer just received their proposal and Bimi is there to explain
+    // it: give them PROPOSAL_INACTIVITY_HOURS to come back before closing.
+    if (
+      conv.last_message_at &&
+      Date.now() - new Date(conv.last_message_at).getTime() <
+        PROPOSAL_INACTIVITY_HOURS * 60 * 60 * 1000 &&
+      (await loadProposalContext(db, conv.contact_id))
+    ) {
+      continue
+    }
     const { data: lastMessage } = await db
       .from('messages')
       .select('sender_type')
