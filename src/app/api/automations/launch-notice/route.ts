@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { createBroadcast, deliverBroadcast, BroadcastError } from '@/lib/whatsapp/broadcast-core'
 import { swapComingSoonFlows } from '@/lib/ai/coming-soon'
+import { sendTemplateMessage, isBsuid } from '@/lib/whatsapp/meta-api'
 
 /**
  * Launch-day notice. Hit by pg_cron on Oct 26 at 8:00 a.m. Colombia
@@ -89,14 +90,18 @@ export async function GET(request: Request) {
     } else {
       const { data: rows } = await db
         .from('contact_tags')
-        .select('contacts ( id, name, phone )')
+        .select('contacts ( id, name, phone, bsuid )')
         .eq('tag_id', tag.id)
-      const recipients = (rows ?? [])
-        .map((r) => (Array.isArray(r.contacts) ? r.contacts[0] : r.contacts) as
-          { name: string | null; phone: string | null } | null)
-        // No phone (e.g. BSUID-only) or the 573000000000 test placeholder.
-        .filter((c): c is { name: string | null; phone: string } => !!c?.phone && !/^5730{9}$/.test(c.phone))
-        .map((c) => ({ to: c.phone, params: [greetingName(c.name)] }))
+      type Tagged = { id: string; name: string | null; phone: string | null; bsuid: string | null }
+      const contacts = (rows ?? [])
+        .map((r) => (Array.isArray(r.contacts) ? r.contacts[0] : r.contacts) as Tagged | null)
+        .filter((c): c is Tagged => !!c)
+      const recipients = contacts
+        // The 573000000000 test placeholder never gets one.
+        .filter((c) => !!c.phone && !/^5730{9}$/.test(c.phone))
+        .map((c) => ({ to: c.phone as string, params: [greetingName(c.name)] }))
+      // Hidden-number contacts (WhatsApp usernames) only have a BSUID.
+      const bsuidContacts = contacts.filter((c) => !c.phone && !!c.bsuid && isBsuid(c.bsuid))
 
       if (recipients.length === 0) {
         result.notice = { skipped: 'no recipients' }
@@ -109,7 +114,54 @@ export async function GET(request: Request) {
             recipients,
           })
           await deliverBroadcast(db, plan)
-          result.notice = { broadcast_id: plan.broadcastId, sent_to: plan.planned.length, rejected: plan.rejected }
+
+          let bsuidSent = 0
+          if (bsuidContacts.length) {
+            const { data: recRows } = await db
+              .from('broadcast_recipients')
+              .insert(
+                bsuidContacts.map((c) => ({
+                  broadcast_id: plan.broadcastId,
+                  contact_id: c.id,
+                  status: 'pending' as const,
+                })),
+              )
+              .select('id, contact_id')
+            for (const rec of recRows ?? []) {
+              const c = bsuidContacts.find((x) => x.id === rec.contact_id)!
+              try {
+                const sent = await sendTemplateMessage({
+                  phoneNumberId: plan.phoneNumberId,
+                  accessToken: plan.accessToken,
+                  to: c.bsuid as string,
+                  templateName: TEMPLATE,
+                  language: LANGUAGE,
+                  template: plan.templateRow ?? undefined,
+                  params: [greetingName(c.name)],
+                })
+                bsuidSent++
+                await db
+                  .from('broadcast_recipients')
+                  .update({ status: 'sent', sent_at: new Date().toISOString(), whatsapp_message_id: sent.messageId })
+                  .eq('id', rec.id)
+              } catch (err) {
+                await db
+                  .from('broadcast_recipients')
+                  .update({ status: 'failed', error_message: err instanceof Error ? err.message : 'Unknown error' })
+                  .eq('id', rec.id)
+              }
+            }
+            await db
+              .from('broadcasts')
+              .update({ total_recipients: plan.planned.length + bsuidContacts.length })
+              .eq('id', plan.broadcastId)
+          }
+          result.notice = {
+            broadcast_id: plan.broadcastId,
+            sent_to: plan.planned.length,
+            bsuid_sent: bsuidSent,
+            rejected: plan.rejected,
+          }
         } catch (err) {
           console.error('[launch-notice]', err)
           result.notice = { error: err instanceof BroadcastError ? err.message : 'failed' }
