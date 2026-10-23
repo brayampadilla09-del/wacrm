@@ -20,6 +20,22 @@ interface AiConfigRow {
 const CONFIG_COLUMNS =
   'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key, coming_soon_enabled, coming_soon_prompt, coming_soon_max_replies'
 
+/** Tag that exempts a contact from the coming soon mode (early-access tests). */
+export const EARLY_ACCESS_TAG = 'acceso-anticipado'
+
+export async function hasEarlyAccessTag(
+  db: SupabaseClient,
+  contactId: string,
+): Promise<boolean> {
+  const { data } = await db
+    .from('contact_tags')
+    .select('tags!inner(name)')
+    .eq('contact_id', contactId)
+    .eq('tags.name', EARLY_ACCESS_TAG)
+    .limit(1)
+  return (data?.length ?? 0) > 0
+}
+
 /**
  * Load and decrypt the account's AI config for *use* (draft or
  * auto-reply). Returns `null` when there's no row or the master switch
@@ -34,9 +50,9 @@ const CONFIG_COLUMNS =
 export async function loadAiConfig(
   db: SupabaseClient,
   accountId: string,
-  opts: { requireActive?: boolean } = {},
+  opts: { requireActive?: boolean; contactId?: string } = {},
 ): Promise<AiConfig | null> {
-  const { requireActive = true } = opts
+  const { requireActive = true, contactId } = opts
   const { data, error } = await db
     .from('ai_configs')
     .select(CONFIG_COLUMNS)
@@ -47,6 +63,11 @@ export async function loadAiConfig(
   if (!data) return null
 
   const row = data as AiConfigRow
+  // Acceso anticipado: a contact carrying the early-access tag gets the
+  // normal assistant even while the coming soon mode is on for everyone.
+  if (row.coming_soon_enabled && contactId && (await hasEarlyAccessTag(db, contactId))) {
+    row.coming_soon_enabled = false
+  }
   // The Playground passes requireActive:false so an admin can test the
   // agent before flipping the master switch on.
   if (requireActive && !row.is_active) return null
