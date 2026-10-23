@@ -146,6 +146,18 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
 }
 ```
 
+A template whose header is an image, video or document takes the media
+link per send through the structured `params` object (the template's
+stored sample link is only a default):
+
+```jsonc
+"template": {
+  "name": "propuesta_enviada_pdf",
+  "language": "es_CO",
+  "params": { "body": ["Ana"], "headerMediaUrl": "https://…/propuesta.pdf" }
+}
+```
+
 Response (201):
 
 ```json

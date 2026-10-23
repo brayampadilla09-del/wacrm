@@ -73,6 +73,7 @@ import {
   type KeywordTriggerConfig,
 } from "./types";
 import { compareKeywordHits, keywordMatchLength, triggerPriority, type KeywordHit } from "./keyword-match";
+import { isTapEntryId } from "@/lib/whatsapp/template-button-reply";
 
 // ============================================================
 // Pure helpers — extracted so engine.test.ts can exercise them
@@ -715,12 +716,12 @@ async function findEntryFlow(
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
   // Exception: the buttons pagina-estudio sends when the team proposes a new
-  // appointment time (reply ids "reprog_*") arrive with no active run waiting
+  // appointment time (reply ids "reprog_*", and "propuesta_*" for the proposal-ready template) arrive with no active run waiting
   // for them. They start the 'manual' flow whose trigger_config.button_id is
   // that id, and ONLY a real button tap does: typed text never matches, and
   // 'manual' flows are out of the keyword and AI-intent matching below.
   const tapId =
-    inbound.kind === "interactive_reply" && inbound.reply_id.startsWith("reprog_") ? inbound.reply_id : null;
+    inbound.kind === "interactive_reply" && isTapEntryId(inbound.reply_id) ? inbound.reply_id : null;
   if (!tapId && inbound.kind !== "text") return null;
   const message = inbound as Extract<ParsedInbound, { kind: "text" }>;
 

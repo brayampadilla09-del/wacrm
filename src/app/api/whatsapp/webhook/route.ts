@@ -10,6 +10,7 @@ import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows, resumeRunAfterMediaDelivery } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { templateButtonReplyId } from '@/lib/whatsapp/template-button-reply'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -1086,19 +1087,12 @@ async function parseMessageContent(
 
     case 'button': {
       // Quick-reply button of a TEMPLATE message (Meta type "button", not
-      // "interactive"; it can't be typed). The reschedule-request template's two
-      // buttons are routed like the interactive ones: "reprog_yes" / "reprog_no"
-      // (by payload, or by the visible text if the payload is not an id).
+      // "interactive"; it can't be typed). The reschedule-request template's
+      // buttons route as "reprog_yes" / "reprog_no" and the proposal-ready
+      // template's as "propuesta_ver" (by payload, or by the visible text if the
+      // payload is not an id) — see lib/whatsapp/template-button-reply.ts.
       const text = message.button?.text || message.button?.payload || null
-      const payload = message.button?.payload ?? ''
-      const norm = (text ?? '').trim().toLowerCase()
-      const replyId = payload.startsWith('reprog_')
-        ? payload
-        : norm === 'sí, confirmo' || norm === 'si, confirmo'
-          ? 'reprog_yes'
-          : norm === 'no me sirve'
-            ? 'reprog_no'
-            : undefined
+      const replyId = templateButtonReplyId(message.button?.text, message.button?.payload)
       return { ...empty, contentText: text, interactiveReplyId: replyId ?? null }
     }
 
