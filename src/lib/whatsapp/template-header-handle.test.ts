@@ -76,6 +76,25 @@ describe('ensureImageHeaderHandle', () => {
     expect(p.header_handle).toBe('HANDLE123');
   });
 
+  it('derives + sets header_handle from a PDF URL for a document header', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    vi.stubGlobal('fetch', vi.fn(async () => imgResponse('application/pdf', 4096)));
+    const p = payload({ header_type: 'document', header_media_url: 'https://x.test/muestra.pdf' });
+    await ensureImageHeaderHandle(p, 'tok');
+    expect(uploadResumableMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: 'application/pdf', fileName: 'header.pdf' }),
+    );
+    expect(p.header_handle).toBe('HANDLE123');
+  });
+
+  it('rejects a document header whose URL is not a PDF', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    vi.stubGlobal('fetch', vi.fn(async () => imgResponse('text/html', 4096)));
+    const p = payload({ header_type: 'document', header_media_url: 'https://x.test/muestra.pdf' });
+    await expect(ensureImageHeaderHandle(p, 'tok')).rejects.toThrow(/PDF/);
+    expect(uploadResumableMedia).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-image content type', async () => {
     vi.stubEnv('META_APP_ID', 'app-1');
     vi.stubGlobal('fetch', vi.fn(async () => imgResponse('text/html')));

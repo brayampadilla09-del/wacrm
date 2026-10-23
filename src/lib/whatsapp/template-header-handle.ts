@@ -10,27 +10,30 @@ import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
  * into a handle and writes it onto the payload, so both the upload path
  * and the legacy URL path actually succeed.
  *
- * No-op unless the header is an image that has a URL but no handle yet.
- * Image-only for now (the #230 scope); video/document handles can follow
- * the same shape.
+ * No-op unless the header is an image or a document (PDF) that has a URL
+ * but no handle yet. Video handles can follow the same shape.
  */
 
 // Meta's image-header sample limits.
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png']
+// Meta's document-header sample: a PDF (kept well under its 100 MB cap).
+const DOCUMENT_MAX_BYTES = 20 * 1024 * 1024
+const DOCUMENT_TYPE = 'application/pdf'
 
 export async function ensureImageHeaderHandle(
   payload: TemplatePayload,
   accessToken: string,
 ): Promise<void> {
-  if (payload.header_type !== 'image') return
+  if (payload.header_type !== 'image' && payload.header_type !== 'document') return
+  const isDocument = payload.header_type === 'document'
   if (payload.header_handle) return // already have one
   if (!payload.header_media_url) return // validator already requires url-or-handle
 
   const appId = process.env.META_APP_ID
   if (!appId) {
     throw new Error(
-      'Image-header templates need META_APP_ID set (used for Meta’s Resumable Upload). Add it to your environment, or remove the image header.',
+      'Image and document header templates need META_APP_ID set (used for Meta’s Resumable Upload). Add it to your environment, or remove the media header.',
     )
   }
 
@@ -41,7 +44,7 @@ export async function ensureImageHeaderHandle(
   // other outbound-fetch call sites (see lib/webhooks/ssrf.ts) — matching
   // the unreachable-host message keeps the failure from being an oracle.
   if (!(await isDeliverableUrl(payload.header_media_url))) {
-    throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
+    throw new Error('Could not fetch the header file URL. Make sure it is publicly reachable.')
   }
 
   // Fetch the sample image bytes (works for our uploaded chat-media URL
@@ -56,29 +59,38 @@ export async function ensureImageHeaderHandle(
       signal: AbortSignal.timeout(10_000),
     })
   } catch {
-    throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
+    throw new Error('Could not fetch the header file URL. Make sure it is publicly reachable.')
   }
   if (!res.ok) {
-    throw new Error(`Header image URL returned ${res.status}. It must be publicly reachable.`)
+    throw new Error(`Header file URL returned ${res.status}. It must be publicly reachable.`)
   }
 
   const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
-  if (contentType && !ALLOWED_IMAGE_TYPES.includes(contentType)) {
+  if (isDocument) {
+    if (contentType && contentType !== DOCUMENT_TYPE) {
+      throw new Error(`Header document must be a PDF (got ${contentType}).`)
+    }
+  } else if (contentType && !ALLOWED_IMAGE_TYPES.includes(contentType)) {
     throw new Error(`Header image must be JPEG or PNG (got ${contentType}).`)
   }
 
   const bytes = new Uint8Array(await res.arrayBuffer())
   if (bytes.byteLength === 0) {
-    throw new Error('Header image is empty.')
+    throw new Error('Header file is empty.')
   }
-  if (bytes.byteLength > IMAGE_MAX_BYTES) {
+  const maxBytes = isDocument ? DOCUMENT_MAX_BYTES : IMAGE_MAX_BYTES
+  if (bytes.byteLength > maxBytes) {
     throw new Error(
-      `Header image is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — Meta's limit is 5 MB.`,
+      `Header file is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — the limit here is ${maxBytes / 1024 / 1024} MB.`,
     )
   }
 
-  const mimeType = ALLOWED_IMAGE_TYPES.includes(contentType) ? contentType : 'image/jpeg'
-  const fileName = mimeType === 'image/png' ? 'header.png' : 'header.jpg'
+  const mimeType = isDocument
+    ? DOCUMENT_TYPE
+    : ALLOWED_IMAGE_TYPES.includes(contentType)
+      ? contentType
+      : 'image/jpeg'
+  const fileName = isDocument ? 'header.pdf' : mimeType === 'image/png' ? 'header.png' : 'header.jpg'
 
   const { handle } = await uploadResumableMedia({
     appId,
