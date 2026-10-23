@@ -640,6 +640,20 @@ async function isHumanHandlingConversation(
 }
 
 /**
+ * Qué flows pueden arrancar para un contacto. Normal: los activos. Contacto de acceso anticipado
+ * (etiqueta, ver hasEarlyAccessTag) con el modo "muy pronto" prendido: el menú normal (off_only, que
+ * queda en borrador) en vez de la versión "muy pronto" (on_only).
+ */
+function entryFlowPool<T extends { or: (f: string) => T; eq: (c: string, v: string) => T }>(
+  query: T,
+  earlyAccess: boolean,
+): T {
+  return earlyAccess
+    ? query.or("and(status.in.(active,draft),coming_soon_mode.eq.off_only),and(status.eq.active,coming_soon_mode.is.null)")
+    : query.eq("status", "active");
+}
+
+/**
  * The active keyword-triggered flow on this channel whose keywords the
  * message explicitly restarts with (see isExplicitRestartRequest), or
  * null. Deterministic on purpose: no AI intent classifier here.
@@ -649,13 +663,12 @@ async function findExplicitRestartFlow(
   accountId: string,
   channelId: string,
   text: string,
+  earlyAccess = false,
 ): Promise<FlowRow | null> {
-  const { data: flows, error } = await db
-    .from("flows")
-    .select("*")
-    .eq("account_id", accountId)
-    .eq("channel_id", channelId)
-    .eq("status", "active")
+  const { data: flows, error } = await entryFlowPool(
+    db.from("flows").select("*").eq("account_id", accountId).eq("channel_id", channelId),
+    earlyAccess,
+  )
     .eq("trigger_type", "keyword")
     .order("created_at", { ascending: true });
   if (error || !flows) return null;
@@ -697,6 +710,7 @@ async function findEntryFlow(
    * question was never answered.
    */
   questionForAi = false,
+  earlyAccess = false,
 ): Promise<FlowRow | null> {
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
@@ -706,13 +720,10 @@ async function findEntryFlow(
   // account's two numbers run independent flows). Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
   // makes the lookup index-supported).
-  const { data: flows, error } = await db
-    .from("flows")
-    .select("*")
-    .eq("account_id", accountId)
-    .eq("channel_id", channelId)
-    .eq("status", "active")
-    .order("created_at", { ascending: true });
+  const { data: flows, error } = await entryFlowPool(
+    db.from("flows").select("*").eq("account_id", accountId).eq("channel_id", channelId),
+    earlyAccess,
+  ).order("created_at", { ascending: true });
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
@@ -1895,6 +1906,7 @@ export async function dispatchInboundToFlows(
       input.message,
       input.isFirstInboundMessage,
       questionForAi,
+      await hasEarlyAccessTag(db, input.contactId),
     );
     if (!flow || !flow.entry_node_id) {
       return { consumed: false, outcome: "no_match" };
@@ -2342,6 +2354,7 @@ async function handleReplyForActiveRun(
       run.account_id,
       run.channel_id,
       message.text,
+      run.contact_id ? await hasEarlyAccessTag(db, run.contact_id) : false,
     );
     if (restartFlow?.entry_node_id) {
       await logEvent(db, run.id, "fallback_fired", run.current_node_key, {
