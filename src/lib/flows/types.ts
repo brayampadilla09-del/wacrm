@@ -132,6 +132,12 @@ export interface SendMediaNodeConfig {
    * at upload time; the user can edit it.
    */
   filename?: string;
+  /**
+   * Espera a que Meta avise que el archivo llegó al chat (status delivered/read/failed) antes de pasar
+   * al siguiente nodo. Sin esto, los botones que van después se entregaban ANTES que la imagen (las
+   * imágenes tardan más), y en el teléfono salían en desorden aunque el CRM los mostrara en orden.
+   */
+  wait_for_delivery?: boolean;
   /** Auto-advance target after the send lands at Meta. */
   next_node_key: string;
 }

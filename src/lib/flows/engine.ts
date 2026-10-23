@@ -1501,6 +1501,7 @@ async function advanceFromNodeKey(
     }
     if (node.node_type === "send_media") {
       const cfg = node.config as unknown as SendMediaNodeConfig;
+      let sentMediaId: string | null = null;
       try {
         const { whatsapp_message_id } = await engineSendMedia({
           accountId: run.account_id,
@@ -1514,6 +1515,7 @@ async function advanceFromNodeKey(
             : undefined,
           filename: cfg.filename,
         });
+        sentMediaId = whatsapp_message_id ?? null;
         await logEvent(db, run.id, "message_sent", node.node_key, {
           node_type: "send_media",
           media_type: cfg.media_type,
@@ -1526,6 +1528,13 @@ async function advanceFromNodeKey(
         });
         await endRun(db, run.id, "failed", "send_media_failed");
         return { outcome: "completed" };
+      }
+      if (cfg.wait_for_delivery && sentMediaId) {
+        // Se queda esperando el aviso de entrega de Meta; el webhook de estados retoma el flow (ver
+        // resumeRunAfterMediaDelivery). Si no se pudo guardar la espera o la imagen ya llegó, sigue de una.
+        if (await suspendUntilMediaDelivered(db, run, node.node_key, sentMediaId, cfg.next_node_key)) {
+          return { outcome: "advanced" };
+        }
       }
       currentKey = cfg.next_node_key;
       continue;
@@ -1812,6 +1821,84 @@ async function advanceFromNodeKey(
   return { outcome: "completed" };
 }
 
+/** Marca en flow_runs.vars que el run espera la entrega de un archivo antes de seguir. */
+const AWAIT_MEDIA_VAR = "_await_media";
+
+/**
+ * Deja el run quieto en el nodo de media hasta que Meta confirme la entrega (el webhook de estados llama a
+ * resumeRunAfterMediaDelivery). Devuelve false si NO hay que esperar: la imagen ya figura entregada o no se
+ * pudo guardar la espera (en ese caso se sigue, mejor desordenado que atascado).
+ */
+async function suspendUntilMediaDelivered(
+  db: AdminClient,
+  run: FlowRunRow,
+  nodeKey: string,
+  wamid: string,
+  nextKey: string,
+): Promise<boolean> {
+  const waitingVars = { ...run.vars, [AWAIT_MEDIA_VAR]: { wamid, next: nextKey } };
+  const { error } = await db
+    .from("flow_runs")
+    .update({ vars: waitingVars, current_node_key: nodeKey, last_advanced_at: new Date().toISOString() })
+    .eq("id", run.id)
+    .eq("status", "active");
+  if (error) {
+    console.error("[flows] suspendUntilMediaDelivered error:", error.message);
+    return false;
+  }
+  run.vars = waitingVars;
+  run.current_node_key = nodeKey;
+
+  // El aviso de entrega puede haber llegado antes de guardar la espera (el webhook ya actualizó messages).
+  const { data: msg } = await db.from("messages").select("status").eq("message_id", wamid).limit(1).maybeSingle();
+  const status = (msg as { status?: string } | null)?.status;
+  if (status === "delivered" || status === "read" || status === "failed") {
+    const cleared = withoutVars(run.vars, [AWAIT_MEDIA_VAR]);
+    if (cleared) {
+      await db.from("flow_runs").update({ vars: cleared }).eq("id", run.id);
+      run.vars = cleared;
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Suelta un run que esperaba la entrega de un archivo y sigue con el nodo guardado. Atómico: si dos avisos
+ * (delivered y read) llegan a la vez, solo uno retoma el flow.
+ */
+async function releaseAwaitingRun(db: AdminClient, run: FlowRunRow): Promise<boolean> {
+  const waiting = run.vars?.[AWAIT_MEDIA_VAR] as { wamid?: string; next?: string } | undefined;
+  if (!waiting?.wamid || !waiting.next) return false;
+  const nextVars = withoutVars(run.vars, [AWAIT_MEDIA_VAR]) ?? run.vars;
+  const { data, error } = await db
+    .from("flow_runs")
+    .update({ vars: nextVars })
+    .eq("id", run.id)
+    .eq("status", "active")
+    .filter(`vars->${AWAIT_MEDIA_VAR}->>wamid`, "eq", waiting.wamid)
+    .select("id");
+  if (error || !data?.length) return false;
+  run.vars = nextVars;
+  const nodes = await loadAllNodes(db, run.flow_id);
+  await advanceFromNodeKey(db, run, waiting.next, nodes);
+  return true;
+}
+
+/** Lo llama el webhook de estados de WhatsApp: el archivo `wamid` ya llegó (o falló), el flow puede seguir. */
+export async function resumeRunAfterMediaDelivery(wamid: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("flow_runs")
+    .select("*")
+    .eq("status", "active")
+    .filter(`vars->${AWAIT_MEDIA_VAR}->>wamid`, "eq", wamid)
+    .limit(1)
+    .maybeSingle();
+  if (!data) return;
+  await releaseAwaitingRun(db, data as FlowRunRow);
+}
+
 /**
  * Optimistic UPDATE — only advance current_node_key when it matches
  * the value we read at the top of dispatch. If another webhook beat
@@ -2036,6 +2123,11 @@ async function handleReplyForActiveRun(
     reply_id: message.kind === "interactive_reply" ? message.reply_id : null,
     text_length: message.kind === "text" ? message.text.length : null,
   });
+
+  // Escribió mientras se esperaba la entrega de un archivo: se libera el run y se manda lo que seguía.
+  if (run.vars?.[AWAIT_MEDIA_VAR] && (await releaseAwaitingRun(db, run))) {
+    return { consumed: true, flow_run_id: run.id, outcome: "advanced" };
+  }
 
   if (!run.current_node_key) {
     // Defensive — a run with status='active' but no current node is

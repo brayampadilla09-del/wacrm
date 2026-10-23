@@ -7,7 +7,7 @@ import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { notifyNewMessage } from '@/lib/contacts/notify-new-message'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
-import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { dispatchInboundToFlows, resumeRunAfterMediaDelivery } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
@@ -399,6 +399,16 @@ async function handleStatusUpdate(status: StatusUpdate) {
 
   if (msgErr) {
     console.error('Error updating message status:', msgErr)
+  }
+
+  // Un Flow puede estar esperando que una imagen llegue al chat antes de mandar los botones (ver
+  // wait_for_delivery en send_media): ya llegó (o falló), que siga.
+  if (status.status === 'delivered' || status.status === 'read' || status.status === 'failed') {
+    try {
+      await resumeRunAfterMediaDelivery(status.id)
+    } catch (err) {
+      console.error('[webhook] resumeRunAfterMediaDelivery failed:', err)
+    }
   }
 
   // Webhook fan-out for this status change happens at the END of this
