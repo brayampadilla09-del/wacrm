@@ -341,7 +341,14 @@
       "toastFailedDelete": "Failed to delete contact",
       "toastDeleted": "Contact deleted",
       "toastBulkFailedDelete": "Failed to delete contacts",
-      "toastBulkDeleted": "{count} contacts deleted"
+      "toastBulkDeleted": "{count} contacts deleted",
+      "resetAction": "Reset to new",
+      "resetContactTitle": "Reset contact to new",
+      "resetContactDesc": "{name} will be left as if they had never talked to the bot: conversations, messages, notes, tags and flow progress are deleted. The contact itself stays. This cannot be undone.",
+      "resetTypePrompt": "To confirm, type the phone number:",
+      "resetBtn": "Reset contact",
+      "toastReset": "Contact reset to new",
+      "toastFailedReset": "Failed to reset contact"
     },
     "form": {
       "addTitle": "Add Contact",

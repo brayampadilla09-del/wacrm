@@ -43,6 +43,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  RotateCcw,
   Loader2,
   Users,
   ChevronLeft,
@@ -93,6 +94,9 @@ export default function ContactsPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [resetTarget, setResetTarget] = useState<Contact | null>(null);
+  const [resetPhone, setResetPhone] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   // Bulk selection (page-scoped — only the loaded rows are selectable)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -283,6 +287,30 @@ export default function ContactsPage() {
   function confirmDelete(contact: Contact) {
     setDeleteTarget(contact);
     setDeleteConfirmOpen(true);
+  }
+
+  // "Reset to new": wipes the contact's history so Bimi treats it as a brand-new lead. Asks to type the phone first.
+  async function handleReset() {
+    if (!resetTarget) return;
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/contacts/${resetTarget.id}/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm_phone: resetPhone }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error ?? t('toastFailedReset'));
+        return;
+      }
+      toast.success(t('toastReset'));
+      setResetTarget(null);
+      setResetPhone('');
+      fetchContacts();
+    } finally {
+      setResetting(false);
+    }
   }
 
   async function handleDelete() {
@@ -713,6 +741,17 @@ export default function ContactsPage() {
                           <Pencil className="size-4" />
                           {t('editAction')}
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setResetPhone('');
+                            setResetTarget(contact);
+                          }}
+                          className="text-popover-foreground focus:bg-muted focus:text-foreground"
+                        >
+                          <RotateCcw className="size-4" />
+                          {t('resetAction')}
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator className="bg-border" />
                         <DropdownMenuItem
                           variant="destructive"
@@ -808,6 +847,42 @@ export default function ContactsPage() {
           onOpenChange={setCustomFieldsOpen}
         />
       )}
+
+      {/* Reset to new: type the phone to confirm */}
+      <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && !resetting && setResetTarget(null)}>
+        <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground">{t('resetContactTitle')}</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              {t('resetContactDesc', { name: resetTarget?.name || resetTarget?.phone || '' })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <p className="text-sm">
+              {t('resetTypePrompt')} <b className="select-all">{resetTarget?.phone}</b>
+            </p>
+            <Input
+              value={resetPhone}
+              onChange={(e) => setResetPhone(e.target.value)}
+              autoComplete="off"
+              aria-label={t('resetTypePrompt')}
+            />
+          </div>
+          <DialogFooter className="bg-popover border-border">
+            <Button variant="outline" onClick={() => setResetTarget(null)} disabled={resetting} className="border-border text-muted-foreground hover:bg-muted">
+              {t('cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleReset}
+              disabled={resetting || resetPhone.replace(/\s+/g, '') !== String(resetTarget?.phone ?? '').replace(/\s+/g, '')}
+            >
+              {resetting && <Loader2 className="size-4 animate-spin" />}
+              {t('resetBtn')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation */}
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
