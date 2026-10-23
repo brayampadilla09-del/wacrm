@@ -6,8 +6,8 @@ import { swapComingSoonFlows } from '@/lib/ai/coming-soon'
 import { sendTemplateMessage, isBsuid } from '@/lib/whatsapp/meta-api'
 
 /**
- * Launch-day notice. Hit by pg_cron on Oct 26 at 8:00 a.m. Colombia
- * (13:00 UTC), with retries at 13:30, 14:00 and 14:30 UTC.
+ * Launch-day notice. Hit by pg_cron on Oct 26 at 10:00 a.m. Colombia
+ * (15:00 UTC), with retries at 15:30, 16:00 and 16:30 UTC.
  *
  *   1. Sends the `lanzamiento_bsign` template to every contact tagged
  *      "Aviso de lanzamiento" (the ones who asked Bimi to be told).
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
   }
 
   // Never fire before launch day, whatever hits this URL.
-  if (Date.now() < Date.parse('2026-10-26T13:00:00Z')) {
+  if (Date.now() < Date.parse('2026-10-26T15:00:00Z')) {
     return NextResponse.json({ skipped: 'before launch day' })
   }
 
