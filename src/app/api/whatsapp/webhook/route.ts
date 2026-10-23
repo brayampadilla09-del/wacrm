@@ -1109,6 +1109,21 @@ interface ContactOutcome {
   wasCreated: boolean
 }
 
+/**
+ * ¿Este contacto ya eligió cómo le dicen? El Flow le pregunta su apodo al principio y al terminar lo marca
+ * con la etiqueta "Conversó con Bimi". Desde ahí el nombre del perfil de WhatsApp ya no debe pisarlo: antes
+ * cada mensaje lo sobrescribía y Bimi saludaba con el nombre del perfil, no con el apodo que le dieron.
+ */
+async function hasChosenName(contactId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin()
+    .from('contact_tags')
+    .select('tags!inner(name)')
+    .eq('contact_id', contactId)
+    .eq('tags.name', 'Conversó con Bimi')
+    .limit(1)
+  return (data?.length ?? 0) > 0
+}
+
 async function findOrCreateContact(
   accountId: string,
   channelId: string,
@@ -1128,7 +1143,7 @@ async function findOrCreateContact(
       .eq('bsuid', bsuid)
       .maybeSingle()
     if (byBsuid) {
-      if (name && name !== byBsuid.name) {
+      if (name && name !== byBsuid.name && !(await hasChosenName(byBsuid.id))) {
         await supabaseAdmin()
           .from('contacts')
           .update({ name, updated_at: new Date().toISOString() })
@@ -1154,7 +1169,7 @@ async function findOrCreateContact(
   if (existingContact) {
     // Update name if it changed (y guarda el BSUID si todavía no lo tenía)
     const patch: Record<string, string> = {}
-    if (name && name !== existingContact.name) patch.name = name
+    if (name && name !== existingContact.name && !(await hasChosenName(existingContact.id))) patch.name = name
     if (bsuid && !existingContact.bsuid) patch.bsuid = bsuid
     if (Object.keys(patch).length > 0) {
       await supabaseAdmin()
