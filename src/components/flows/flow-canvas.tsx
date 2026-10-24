@@ -344,6 +344,8 @@ function FlowCanvasInner() {
   // list view's analogue is the per-card expanded set in
   // flow-builder.tsx.
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
+  // Single click only highlights a path; double click opens the panel.
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
   const selectedNode = useMemo(
     () =>
       selectedNodeKey
@@ -459,20 +461,49 @@ function FlowCanvasInner() {
     });
   }, [flashKey, builderNodes, reactFlow]);
 
-  // Path highlight: with a node selected, everything upstream (how a
-  // customer gets there) and downstream (where it leads) stays lit and
-  // the rest dims. View-only; never touches node data.
+  // Path highlight: with a node clicked, light up the route that leads
+  // to it and the route that follows it. Flows loop back to the menu
+  // ("anything else" -> main menu), so a plain reachability walk lights
+  // the whole graph. Instead each node gets a depth (BFS from the entry
+  // and from nodes nothing points to) and only edges that go deeper are
+  // followed, which drops the loop-backs and leaves a path.
   const pathHighlight = useMemo(() => {
-    if (!selectedNodeKey) return null;
+    if (!highlightKey) return null;
     const fwd = new Map<string, string[]>();
     const back = new Map<string, string[]>();
+    const hasIncoming = new Set<string>();
     for (const e of rfEdges) {
       fwd.set(e.source, [...(fwd.get(e.source) ?? []), e.target]);
+      hasIncoming.add(e.target);
+    }
+    const depth = new Map<string, number>();
+    const queue: string[] = [];
+    for (const n of builderNodes) {
+      if (n.node_key === entryNodeId || !hasIncoming.has(n.node_key)) {
+        depth.set(n.node_key, 0);
+        queue.push(n.node_key);
+      }
+    }
+    for (let i = 0; i < queue.length; i++) {
+      const k = queue[i];
+      for (const next of fwd.get(k) ?? []) {
+        if (!depth.has(next)) {
+          depth.set(next, (depth.get(k) ?? 0) + 1);
+          queue.push(next);
+        }
+      }
+    }
+    const isForward = (a: string, b: string) =>
+      (depth.get(b) ?? 0) > (depth.get(a) ?? 0);
+    const forwardEdges = rfEdges.filter((e) => isForward(e.source, e.target));
+    const fAdj = new Map<string, string[]>();
+    for (const e of forwardEdges) {
+      fAdj.set(e.source, [...(fAdj.get(e.source) ?? []), e.target]);
       back.set(e.target, [...(back.get(e.target) ?? []), e.source]);
     }
     const walk = (adj: Map<string, string[]>) => {
-      const seen = new Set<string>([selectedNodeKey]);
-      const stack = [selectedNodeKey];
+      const seen = new Set<string>([highlightKey]);
+      const stack = [highlightKey];
       while (stack.length) {
         for (const next of adj.get(stack.pop() as string) ?? []) {
           if (!seen.has(next)) {
@@ -483,10 +514,10 @@ function FlowCanvasInner() {
       }
       return seen;
     };
-    const down = walk(fwd);
+    const down = walk(fAdj);
     const up = walk(back);
-    return { nodes: new Set([...down, ...up]), up, down };
-  }, [selectedNodeKey, rfEdges]);
+    return { nodes: new Set([...down, ...up]), up, down, isForward };
+  }, [highlightKey, rfEdges, builderNodes, entryNodeId]);
 
   const displayNodes = useMemo(
     () =>
@@ -504,8 +535,9 @@ function FlowCanvasInner() {
       pathHighlight
         ? rfEdges.map((e) => {
             const lit =
-              (pathHighlight.down.has(e.source) && pathHighlight.down.has(e.target)) ||
-              (pathHighlight.up.has(e.source) && pathHighlight.up.has(e.target));
+              pathHighlight.isForward(e.source, e.target) &&
+              ((pathHighlight.down.has(e.source) && pathHighlight.down.has(e.target)) ||
+                (pathHighlight.up.has(e.source) && pathHighlight.up.has(e.target)));
             return {
               ...e,
               animated: lit,
@@ -521,6 +553,14 @@ function FlowCanvasInner() {
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: RfNode<NodeData>) => {
+      setHighlightKey(node.id);
+    },
+    []
+  );
+
+  const handleNodeDoubleClick = useCallback(
+    (_event: React.MouseEvent, node: RfNode<NodeData>) => {
+      setHighlightKey(node.id);
       setSelectedNodeKey(node.id);
     },
     []
@@ -634,7 +674,8 @@ function FlowCanvasInner() {
           onNodesChange={handleNodesChange}
           onNodeDragStop={handleNodeDragStop}
           onNodeClick={handleNodeClick}
-          onPaneClick={() => setSelectedNodeKey(null)}
+          onNodeDoubleClick={handleNodeDoubleClick}
+          onPaneClick={() => setHighlightKey(null)}
           onConnect={handleConnect}
           onNodesDelete={handleNodesDelete}
           onEdgesDelete={handleEdgesDelete}
