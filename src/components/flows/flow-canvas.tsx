@@ -327,9 +327,17 @@ function FlowCanvasInner() {
     updateNodePositions,
     removeNode,
     flashKey,
+    unusedKeys,
+    hideUnused,
   } = useFlowEditor();
   const reactFlow = useReactFlow();
-  const builderNodes = state.nodes;
+  const builderNodes = useMemo(
+    () =>
+      hideUnused
+        ? state.nodes.filter((n) => !unusedKeys.has(n.node_key))
+        : state.nodes,
+    [state.nodes, unusedKeys, hideUnused],
+  );
   const entryNodeId = state.entry_node_id;
 
   // Side-panel state — which node's form is open. Canvas-only UI; the
@@ -451,6 +459,66 @@ function FlowCanvasInner() {
     });
   }, [flashKey, builderNodes, reactFlow]);
 
+  // Path highlight: with a node selected, everything upstream (how a
+  // customer gets there) and downstream (where it leads) stays lit and
+  // the rest dims. View-only; never touches node data.
+  const pathHighlight = useMemo(() => {
+    if (!selectedNodeKey) return null;
+    const fwd = new Map<string, string[]>();
+    const back = new Map<string, string[]>();
+    for (const e of rfEdges) {
+      fwd.set(e.source, [...(fwd.get(e.source) ?? []), e.target]);
+      back.set(e.target, [...(back.get(e.target) ?? []), e.source]);
+    }
+    const walk = (adj: Map<string, string[]>) => {
+      const seen = new Set<string>([selectedNodeKey]);
+      const stack = [selectedNodeKey];
+      while (stack.length) {
+        for (const next of adj.get(stack.pop() as string) ?? []) {
+          if (!seen.has(next)) {
+            seen.add(next);
+            stack.push(next);
+          }
+        }
+      }
+      return seen;
+    };
+    const down = walk(fwd);
+    const up = walk(back);
+    return { nodes: new Set([...down, ...up]), up, down };
+  }, [selectedNodeKey, rfEdges]);
+
+  const displayNodes = useMemo(
+    () =>
+      pathHighlight
+        ? rfNodes.map((n) => ({
+            ...n,
+            style: { ...n.style, opacity: pathHighlight.nodes.has(n.id) ? 1 : 0.22 },
+          }))
+        : rfNodes,
+    [rfNodes, pathHighlight]
+  );
+
+  const displayEdges = useMemo(
+    () =>
+      pathHighlight
+        ? rfEdges.map((e) => {
+            const lit =
+              (pathHighlight.down.has(e.source) && pathHighlight.down.has(e.target)) ||
+              (pathHighlight.up.has(e.source) && pathHighlight.up.has(e.target));
+            return {
+              ...e,
+              animated: lit,
+              style: lit
+                ? { stroke: 'var(--primary)', strokeWidth: 2.5 }
+                : { ...e.style, opacity: 0.15 },
+              zIndex: lit ? 10 : 0,
+            };
+          })
+        : rfEdges,
+    [rfEdges, pathHighlight]
+  );
+
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: RfNode<NodeData>) => {
       setSelectedNodeKey(node.id);
@@ -557,8 +625,8 @@ function FlowCanvasInner() {
     <>
       <div className="h-full w-full overflow-hidden">
         <ReactFlow
-          nodes={rfNodes}
-          edges={rfEdges}
+          nodes={displayNodes}
+          edges={displayEdges}
           nodeTypes={NODE_TYPES}
           fitView
           fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
@@ -566,6 +634,7 @@ function FlowCanvasInner() {
           onNodesChange={handleNodesChange}
           onNodeDragStop={handleNodeDragStop}
           onNodeClick={handleNodeClick}
+          onPaneClick={() => setSelectedNodeKey(null)}
           onConnect={handleConnect}
           onNodesDelete={handleNodesDelete}
           onEdgesDelete={handleEdgesDelete}

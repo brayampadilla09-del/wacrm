@@ -84,7 +84,16 @@ export function FlowBuilder() {
     updateNode,
     updateNodeConfig,
     removeNode: removeNodeCtx,
+    unusedKeys,
+    hideUnused,
   } = useFlowEditor();
+  const visibleNodes = useMemo(
+    () =>
+      hideUnused
+        ? state.nodes.filter((n) => !unusedKeys.has(n.node_key))
+        : state.nodes,
+    [state.nodes, unusedKeys, hideUnused],
+  );
 
   // List-only UI state: which cards are expanded + scroll refs for
   // jump-to-node. The flash itself is read from context (flashKey)
@@ -168,7 +177,7 @@ export function FlowBuilder() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-foreground text-sm font-semibold">
-            {t('nodesTitle', { count: state.nodes.length })}
+            {t('nodesTitle', { count: visibleNodes.length })}
           </h2>
           <AddNodeButton onAdd={addNode} t={t} />
         </div>
@@ -178,7 +187,7 @@ export function FlowBuilder() {
             {t.rich('nodesEmpty', { strong: (chunks) => <strong>{chunks}</strong> })}
           </div>
         ) : (
-          state.nodes.map((node) => (
+          visibleNodes.map((node) => (
             <NodeCard
               key={node.node_key}
               node={node}

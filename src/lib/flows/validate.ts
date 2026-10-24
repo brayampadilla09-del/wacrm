@@ -40,6 +40,8 @@ interface FlowInput {
   trigger_type: "keyword" | "first_inbound_message" | "manual";
   trigger_config: Record<string, unknown>;
   entry_node_id: string | null;
+  /** Only `handoff_node_key` is read (an extra reachability root). */
+  fallback_policy?: { handoff_node_key?: string | null } | null;
 }
 
 interface NodeInput {
@@ -119,7 +121,11 @@ export function validateFlowForActivation(
   // entry. Done after per-node validation so we don't double-report
   // when a node has bad config AND is unreachable.
   if (flow.entry_node_id && keys.has(flow.entry_node_id)) {
-    const reached = reachableFromEntry(flow.entry_node_id, nodes);
+    const reached = reachableFromEntry(
+      flow.entry_node_id,
+      nodes,
+      extraFlowRoots(flow),
+    );
     for (const n of nodes) {
       if (!reached.has(n.node_key)) {
         issues.push({
@@ -815,15 +821,37 @@ function validateNode(
 // Reachability — BFS from the entry, follow outgoing edges per node
 // ============================================================
 
+/**
+ * Nodes entered without an edge from the entry: the trigger's
+ * `button_entries` (template quick-reply buttons) and the fallback
+ * policy's handoff node. Both are real entry points at runtime.
+ */
+export function extraFlowRoots(flow: {
+  trigger_config: Record<string, unknown>;
+  fallback_policy?: { handoff_node_key?: string | null } | null;
+}): string[] {
+  const roots: string[] = [];
+  const entries = flow.trigger_config?.button_entries;
+  if (entries && typeof entries === "object") {
+    for (const v of Object.values(entries as Record<string, unknown>)) {
+      if (typeof v === "string" && v) roots.push(v);
+    }
+  }
+  const handoff = flow.fallback_policy?.handoff_node_key;
+  if (handoff) roots.push(handoff);
+  return roots;
+}
+
 export function reachableFromEntry(
   entryKey: string,
   nodes: NodeInput[],
+  extraRoots: string[] = [],
 ): Set<string> {
   const byKey = new Map<string, NodeInput>();
   for (const n of nodes) byKey.set(n.node_key, n);
 
   const visited = new Set<string>();
-  const queue: string[] = [entryKey];
+  const queue: string[] = [entryKey, ...extraRoots];
   while (queue.length > 0) {
     const key = queue.shift() as string;
     if (visited.has(key)) continue;

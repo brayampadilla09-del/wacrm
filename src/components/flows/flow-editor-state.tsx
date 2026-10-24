@@ -47,6 +47,8 @@ import { toast } from "sonner";
 
 import {
   validateFlowForActivation,
+  reachableFromEntry,
+  extraFlowRoots,
   type ValidationIssue,
 } from "@/lib/flows/validate";
 import { useTranslations } from "next-intl";
@@ -129,6 +131,15 @@ export interface FlowEditorContextValue {
    */
   flashKey: string | null;
   requestFlash: (key: string) => void;
+
+  /**
+   * Nodes no path reaches (entry, trigger button entries, fallback
+   * handoff). View-only: hiding them never touches `state.nodes`, so
+   * Save still persists every node.
+   */
+  unusedKeys: Set<string>;
+  hideUnused: boolean;
+  setHideUnused: (hide: boolean) => void;
 }
 
 // ============================================================
@@ -219,6 +230,8 @@ export function applyNodePositions(
 // ============================================================
 // Context
 // ============================================================
+
+const HIDE_UNUSED_KEY = "wacrm.flowEditor.hideUnused";
 
 const FlowEditorCtx = createContext<FlowEditorContextValue | null>(null);
 
@@ -328,11 +341,43 @@ export function FlowEditorProvider({
           trigger_type: state.trigger_type,
           trigger_config: state.trigger_config,
           entry_node_id: state.entry_node_id,
+          fallback_policy: initialFlow.fallback_policy,
         },
         state.nodes,
       ),
-    [state],
+    [state, initialFlow.fallback_policy],
   );
+
+  const unusedKeys = useMemo(() => {
+    if (!state.entry_node_id) return new Set<string>();
+    const reached = reachableFromEntry(
+      state.entry_node_id,
+      state.nodes,
+      extraFlowRoots({
+        trigger_config: state.trigger_config,
+        fallback_policy: initialFlow.fallback_policy,
+      }),
+    );
+    return new Set(
+      state.nodes.map((n) => n.node_key).filter((k) => !reached.has(k)),
+    );
+  }, [state, initialFlow.fallback_policy]);
+
+  const [hideUnused, setHideUnusedRaw] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(HIDE_UNUSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setHideUnused = useCallback((hide: boolean) => {
+    setHideUnusedRaw(hide);
+    try {
+      window.localStorage.setItem(HIDE_UNUSED_KEY, hide ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, []);
   const canActivate = useMemo(
     () => issues.every((i) => i.severity !== "error"),
     [issues],
@@ -560,6 +605,9 @@ export function FlowEditorProvider({
       deleteFlow,
       flashKey,
       requestFlash,
+      unusedKeys,
+      hideUnused,
+      setHideUnused,
     }),
     [
       initialFlow,
@@ -582,6 +630,9 @@ export function FlowEditorProvider({
       deleteFlow,
       flashKey,
       requestFlash,
+      unusedKeys,
+      hideUnused,
+      setHideUnused,
     ],
   );
 

@@ -25,7 +25,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { GitFork, List, Loader2, Maximize2, Minimize2, Save } from "lucide-react";
+import { Eye, EyeOff, GitFork, List, Loader2, Maximize2, Minimize2, Save } from "lucide-react";
 
 import { FlowBuilder } from "./flow-builder";
 import { FlowCanvas } from "./flow-canvas";
@@ -143,6 +143,7 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
                 label={t("listView")}
               />
             </div>
+            <HideUnusedToggle />
             <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
               {LEGEND_TYPES.map((t_type) => (
                 <span
@@ -193,6 +194,28 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
         )}
       </div>
     </FlowEditorProvider>
+  );
+}
+
+/** View-only switch: hides nodes no path reaches. Never edits or deletes them. */
+function HideUnusedToggle() {
+  const t = useTranslations("Flows.builder");
+  const { unusedKeys, hideUnused, setHideUnused } = useFlowEditor();
+  if (unusedKeys.size === 0) return null;
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={hideUnused}
+      onClick={() => setHideUnused(!hideUnused)}
+      className={cn(
+        "inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-[12.5px] font-medium transition-colors",
+        hideUnused ? "bg-primary/10 text-foreground" : "bg-card text-muted-foreground hover:bg-muted",
+      )}
+    >
+      {hideUnused ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+      {t("hideUnused", { count: unusedKeys.size })}
+    </button>
   );
 }
 
