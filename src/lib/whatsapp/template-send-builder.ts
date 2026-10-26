@@ -62,7 +62,7 @@ export type MetaSendComponent =
     };
 
 type MetaSendParameter =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; parameter_name?: string }
   | { type: 'image'; image: { link?: string; id?: string } }
   | { type: 'video'; video: { link?: string; id?: string } }
   | { type: 'document'; document: { link?: string; id?: string } }
@@ -127,8 +127,30 @@ function buildBodyComponent(
   template: MessageTemplate,
   params: SendTimeParams,
 ): MetaSendComponent | null {
-  const varCount = extractVariableIndices(template.body_text).length;
   const body = params.body ?? [];
+  // Plantillas con variables con nombre ({{customer_name}}): Meta exige
+  // parameter_name en cada valor, en el orden en que aparecen en el texto.
+  const namedVars = [
+    ...new Set(
+      [...template.body_text.matchAll(/\{\{([a-z_][a-z0-9_]*)\}\}/g)].map((m) => m[1]),
+    ),
+  ];
+  if (namedVars.length > 0) {
+    if (body.length < namedVars.length) {
+      throw new Error(
+        `Body has ${namedVars.length} named variable(s) but only ${body.length} value(s) were supplied.`,
+      );
+    }
+    return {
+      type: 'body',
+      parameters: namedVars.map((name, i) => ({
+        type: 'text',
+        parameter_name: name,
+        text: String(body[i]),
+      })),
+    };
+  }
+  const varCount = extractVariableIndices(template.body_text).length;
   if (varCount === 0 && body.length === 0) return null;
   if (body.length < varCount) {
     throw new Error(
