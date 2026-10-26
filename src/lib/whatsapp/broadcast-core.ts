@@ -59,6 +59,7 @@ export interface CreateBroadcastParams {
 
 interface PlannedRecipient {
   recipientRowId: string;
+  contactId: string;
   phone: string;
   params: string[];
 }
@@ -231,7 +232,7 @@ export async function createBroadcast(
   const byContact = new Map(deduped.map((r) => [r.contactId, r]));
   const planned: PlannedRecipient[] = recipientRows.map((row) => {
     const r = byContact.get(row.contact_id as string)!;
-    return { recipientRowId: row.id as string, phone: r.phone, params: r.params };
+    return { recipientRowId: row.id as string, contactId: r.contactId, phone: r.phone, params: r.params };
   });
 
   return {
@@ -244,6 +245,49 @@ export async function createBroadcast(
     planned,
     rejected,
   };
+}
+
+/**
+ * A broadcast goes straight to Meta, so the thread never saw it. When the
+ * customer replies ("Firme", "Gracias") the AI had no idea what they were
+ * answering, declared itself unsure and handed off to the team; a stale
+ * reply budget from an older flow could also block it outright. Log the
+ * template text in the contact's latest conversation and clear the AI
+ * counters so the reply is attended like any other. Best-effort.
+ */
+async function recordTemplateInThread(
+  db: SupabaseClient,
+  plan: BroadcastPlan,
+  recipient: PlannedRecipient
+): Promise<void> {
+  try {
+    const body = plan.templateRow?.body_text;
+    if (!body) return;
+    const { data: conv } = await db
+      .from('conversations')
+      .select('id')
+      .eq('contact_id', recipient.contactId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!conv) return;
+    let i = 0;
+    const text = body.replace(/\{\{[^}]+\}\}/g, () => recipient.params[i++] ?? '');
+    await db.from('messages').insert({
+      conversation_id: conv.id,
+      sender_type: 'bot',
+      content_type: 'template',
+      content_text: text,
+      template_name: plan.templateName,
+      status: 'sent',
+    });
+    await db
+      .from('conversations')
+      .update({ ai_reply_count: 0, ai_autoreply_disabled: false })
+      .eq('id', conv.id);
+  } catch (err) {
+    console.warn('[broadcast-core] could not log template in thread:', err);
+  }
 }
 
 /**
@@ -303,6 +347,7 @@ export async function deliverBroadcast(
           error_message: null,
         })
         .eq('id', recipient.recipientRowId);
+      await recordTemplateInThread(db, plan, recipient);
     } else {
       await db
         .from('broadcast_recipients')
