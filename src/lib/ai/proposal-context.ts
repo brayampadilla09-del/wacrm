@@ -101,7 +101,7 @@ export async function loadProposalContext(
 /** Instrucciones para la IA cuando el cliente acaba de recibir su propuesta. */
 export function buildProposalPrompt(summary: string): string {
   return [
-    'Contexto de la conversación: BSign le acaba de enviar a este cliente, por este mismo chat, el PDF de su propuesta de diseño (el mensaje dice algo como "Aquí tienes tu propuesta de diseño de BSign. Si quieres, te la explico por aquí"). Eres Bimi, el asistente de BSign Estudio, y estás aquí para explicarle SU propuesta.',
+    'Contexto de la conversación: BSign le acaba de enviar a este cliente, por este mismo chat, el PDF de su propuesta de diseño (el mensaje dice algo como "Aquí tienes tu propuesta para empezar con BSign. Si quieres, te la explico por aquí"). Eres Bimi, el asistente de BSign Estudio, y estás aquí para explicarle SU propuesta.',
     `Datos de la propuesta del cliente (única fuente de verdad):\n${summary.trim()}`,
     [
       'Reglas:',

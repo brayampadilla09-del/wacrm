@@ -84,4 +84,22 @@ export async function saveProposalContextNote(
     // Best effort: the note is saved; a stale pause only delays the bot.
     console.error('[api/v1/contacts] AI state reset failed:', resetErr.message)
   }
+
+  // A menu run still waiting on a tap would swallow the customer's reply to
+  // the proposal ("ok", "¿cuánto cuesta?"): the engine reads it as an aside to
+  // that menu, the generic AI answers without the proposal and the menu step
+  // is re-sent, so the thread never reaches the proposal answers. Close it.
+  const { error: runErr } = await db
+    .from('flow_runs')
+    .update({
+      status: 'completed',
+      ended_at: new Date().toISOString(),
+      end_reason: 'proposal_sent',
+    })
+    .eq('account_id', accountId)
+    .eq('contact_id', contactId)
+    .eq('status', 'active')
+  if (runErr) {
+    console.error('[api/v1/contacts] closing the active flow run failed:', runErr.message)
+  }
 }
